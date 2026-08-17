@@ -1,0 +1,140 @@
+%% Junior Mining Analyst Workbench - current-state and proposed-capability flow.
+%% Acyclic, compact landscape composition in three horizontal bands.
+flowchart TB
+    classDef current fill:#F8FAFC,stroke:#334155,color:#0F172A,stroke-width:1.5px;
+    classDef automated fill:#E0F2FE,stroke:#0369A1,color:#0C4A6E,stroke-width:1.5px;
+    classDef source fill:#F1F5F9,stroke:#64748B,color:#334155,stroke-width:1.5px;
+    classDef decision fill:#FEF3C7,stroke:#B45309,color:#78350F,stroke-width:1.5px;
+    classDef output fill:#ECFDF5,stroke:#047857,color:#064E3B,stroke-width:1.5px;
+    classDef proposed fill:#FFFBEB,stroke:#B45309,color:#78350F,stroke-width:1.75px,stroke-dasharray: 7 4;
+    classDef note fill:#FFF7ED,stroke:#C2410C,color:#7C2D12,stroke-width:1.25px;
+
+    subgraph ROW1["ENTRY + WEBSITE"]
+        direction LR
+        subgraph L1["USER JOURNEY"]
+            direction LR
+            U0["Private Research OS<br/><b>Junior Mining Analyst Workbench</b><br/>Canada/US junior-mining universe"]
+            U1["Find company<br/>search / suggestion / company grid"]
+            U2["Optional: paste issuer evidence"]
+            U3{"Supported<br/>12-company universe?"}
+            U4["Company not found"]
+            U5["Start research"]
+            U0 --> U1 --> U3
+            U2 -.-> U5
+            U3 -- No --> U4
+            U3 -- Yes --> U5
+        end
+        subgraph L2["WEBSITE INTERFACE"]
+            direction LR
+            W1["Research request"]
+            W2["Express API<br/>POST /api/research-runs"]
+            W3["Validate query<br/>normalize manual sources"]
+            W4["Launch research run"]
+            U5 --> W1 --> W2 --> W3 --> W4
+        end
+    end
+
+    subgraph ROW2["DATA COLLECTION + RESEARCH"]
+        direction LR
+        subgraph L4["DATA + EVIDENCE SOURCES"]
+            direction LR
+            S1[("Evidence foundation<br/>Seeded company information<br/>SEC + SEDAR+ discovery")]
+            S2[("Issuer collection<br/>Issuer crawler / Playwright management + news<br/>Newswire / RSS discovery")]
+            S3[("Manual issuer evidence<br/>normalized separately; appended after collection<br/>bypasses automated extraction/audit")]
+            S4[("Yahoo Finance / YFinance<br/>primary market data")]
+            S5[("Financial Modeling Prep<br/>fallback")]
+            W4 --> S1
+            S1 ~~~ S2 ~~~ S3 ~~~ S4 ~~~ S5
+        end
+        subgraph L3["RESEARCH OPERATIONS"]
+            direction LR
+            O1["⚙ Automated evidence collection"]
+            O2["⚙ Market + financial collection<br/>freshness + alternate-listing reconciliation"]
+            O3["⚙ Source deduplication / fact extraction<br/>coverage + missing-data audit"]
+            O4["⚙ Research + scoring engine<br/>evidence-adjusted confidence<br/>preserve unknown / missing facts"]
+            O5["In-memory session report store"]
+            S1 -.-> O1
+            S2 -.-> O1
+            S4 -.-> O2
+            S5 -.-> O2
+            O1 --> O3
+            O2 --> O3 --> O4 --> O5
+            S3 -.-> O4
+        end
+    end
+
+    subgraph ROW3["REPORT WORKSPACE + FUTURE PROFESSIONAL LAYER"]
+        direction LR
+        subgraph L5["OUTPUTS + DECISIONS"]
+            direction TB
+            R0["Generated company workspace<br/>overview / project / jurisdiction / stage / commodity / exchange<br/>market + financial snapshots / analyst forecast / share structure<br/>feasibility score / evidence confidence"]
+            H1["Session history<br/>GET /api/research-runs on mount + after completed run"]
+            subgraph TABS["CURRENT REPORT TABS"]
+                direction TB
+                R1["Investment Quality<br/>metrics / timeline / weights / confidence / methodology"]
+                R2["Market Perspectives<br/>3 synthesized frameworks / forecasts / non-endorsement"]
+                R3["Management<br/>team / track record / diligence gaps"]
+                R4["Risks<br/>red flags / questions / catalysts / capital / scenarios"]
+                R5["News<br/>issuer news / drilling / financing / permitting / links"]
+                R6["Shares<br/>outstanding / float / ownership / dilution checks"]
+                R7["Financials<br/>revenue / profit / cash / debt / cash flow / margins"]
+                R8["Sources<br/>quality / evidence links / import / rerun"]
+                R1 ~~~ R2 ~~~ R3 ~~~ R4
+                R5 ~~~ R6 ~~~ R7 ~~~ R8
+                R1 --> R5
+                R2 --> R6
+                R3 --> R7
+                R4 --> R8
+            end
+            R9["Review cited evidence; identify unknowns + diligence priorities<br/>Rerun when evidence changes / return home / research another company"]
+            D1["Research guide - not buy/sell advice"]
+            O5 --> R0
+            O5 --> H1
+            R0 --> R1
+            R5 --> R9
+            R6 --> R9
+            R7 --> R9
+            R8 --> R9
+            D1 ~~~ R9
+        end
+        subgraph L6["PROPOSED PROFESSIONAL LAYER - NOT CURRENTLY IMPLEMENTED"]
+            direction TB
+            P0["PROPOSED extensions"]
+            P1["PROPOSED<br/>Identity + security<br/>Extends: website interface"]
+            P3["PROPOSED<br/>Portfolio workflow<br/>Extends: company workspace"]
+            P4["PROPOSED<br/>Monitoring<br/>Extends: market/evidence refresh"]
+            P6["PROPOSED<br/>Professional reporting<br/>Extends: sources + report"]
+            P2["PROPOSED<br/>Persistent workspace<br/>Extends: session report storage"]
+            P5["PROPOSED<br/>Comparative analysis<br/>Extends: company workspace"]
+            P8["PROPOSED<br/>Operations + administration<br/>Extends: provider + freshness audit"]
+            P7["PROPOSED<br/>Collaboration + governance<br/>Extends: report review"]
+            P1 ~~~ P3 ~~~ P4 ~~~ P6
+            P2 ~~~ P5 ~~~ P8 ~~~ P7
+            P0 --> P1
+            P0 --> P3
+            P0 --> P4
+            P0 --> P6
+            P1 --> P2
+            P3 --> P5
+            P4 --> P8
+            P6 --> P7
+        end
+        R9 -.-> P0
+    end
+
+    subgraph LEGEND["LEGEND"]
+        direction LR
+        G1["Current feature"]
+        G2["⚙ Automated operation"]
+        G3[("External source")]
+        G4{"Decision / failure"}
+        G5["PROPOSED<br/>Future capability"]
+        G1 ~~~ G2 ~~~ G3 ~~~ G4 ~~~ G5
+    end
+
+    class U0,U1,U2,U4,U5,W1,W2,W3,W4,R0,H1,R1,R2,R3,R4,R5,R6,R7,R8,R9,G1 current;
+    class O1,O2,O3,O4,O5,G2 automated;
+    class S1,S2,S3,S4,S5,G3 source;
+    class U3,G4 decision;
+    class D1 note;
+    class P1,P2,P3,P4,P5,P6,P7,P8,P0,G5 proposed;
