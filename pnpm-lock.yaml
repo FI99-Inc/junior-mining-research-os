@@ -35,9 +35,6 @@ importers:
       yahoo-finance2:
         specifier: ^3.15.3
         version: 3.15.3
-      zod:
-        specifier: ^4.2.1
-        version: 4.4.3
     devDependencies:
       '@testing-library/jest-dom':
         specifier: ^6.9.1
@@ -1585,6 +1582,7 @@ packages:
   yahoo-finance2@3.15.3:
     resolution: {integrity: sha512-AFmVZ4ACg3QFT2a/hyJv4Scp2J45gm/6xetVgvUvXzZypqsqbgreXJad4i+qm0onj6yeCf2fPhvow7Eh0CwwzA==}
     engines: {node: '>=20.0.0'}
+    deprecated: yahoo-finance2 v3 is no longer supported. Upgrade to v4, which requires Node.js 22 or newer.
     hasBin: true
 
   yallist@3.1.1:
@@ -1597,9 +1595,6 @@ packages:
 
   zod@3.25.76:
     resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
-
-  zod@4.4.3:
-    resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
 
 snapshots:
 
@@ -3015,5 +3010,3 @@ snapshots:
       zod: 3.25.76
 
   zod@3.25.76: {}
-
-  zod@4.4.3: {}

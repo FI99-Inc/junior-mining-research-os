@@ -67,9 +67,8 @@ async function main() {
           marketAgeDays: ageDays(run.marketSnapshot?.asOf),
           missingFinancialFields: missingFields(run.financialSnapshot),
           providerDisagreement:
-            /FMP fallback|alternate listing/i.test(run.marketSnapshot?.sourceLabel ?? "") ||
-            /alternate listing/i.test(run.financialSnapshot?.sourceLabel ?? "") ||
-            /FMP/i.test(run.shareStructure?.floatQuality ?? ""),
+            /alternate listing/i.test(run.marketSnapshot?.sourceLabel ?? "") ||
+            /alternate listing/i.test(run.financialSnapshot?.sourceLabel ?? ""),
           sourceQualityConcern:
             (run.marketSnapshot?.dataNeeded ?? []).length > 0 ||
             (run.financialSnapshot?.dataNeeded ?? []).length > 0 ||

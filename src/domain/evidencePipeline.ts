@@ -67,11 +67,25 @@ export interface EvidenceCollectionResult {
 interface EvidenceOptions {
   fetcher?: typeof fetch;
   browserFetcher?: BrowserPageFetcher;
+  fetchTimeoutMs?: number;
+  signal?: AbortSignal;
   now?: () => string;
 }
 
 type Fetcher = typeof fetch;
 type AdapterEvidenceResult = { sources: SourceDocument[]; adapters: AdapterStatus[] };
+
+export function createTimeoutFetcher(fetcher: Fetcher, timeoutMs = 8000, signal?: AbortSignal): Fetcher {
+  return async (input, init) => {
+    const signals = [signal, input instanceof Request ? input.signal : undefined, init?.signal]
+      .filter((candidate): candidate is AbortSignal => Boolean(candidate));
+    // Keep the deadline attached to the response body, not just the header request.
+    const combined = AbortSignal.any([...signals, AbortSignal.timeout(timeoutMs)]);
+    combined.throwIfAborted();
+    return fetcher(input, { ...init, signal: combined });
+  };
+}
+
 export interface BrowserPageResult {
   url: string;
   finalUrl: string;
@@ -175,7 +189,6 @@ export function createPlaywrightBrowserFetcher(): BrowserPageFetcher | undefined
   if (browserUnavailable()) return undefined;
 
   let browserPromise: Promise<Browser> | undefined;
-  let cleanupRegistered = false;
 
   async function getBrowser() {
     if (!browserPromise) {
@@ -183,12 +196,6 @@ export function createPlaywrightBrowserFetcher(): BrowserPageFetcher | undefined
         const chromePath = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
         const launchOptions = existsSync(chromePath) ? { headless: true, executablePath: chromePath } : { headless: true };
         return chromium.launch(launchOptions);
-      });
-    }
-    if (!cleanupRegistered && typeof process !== "undefined") {
-      cleanupRegistered = true;
-      process.once("exit", () => {
-        void browserPromise?.then((browser) => browser.close()).catch(() => undefined);
       });
     }
     return browserPromise;
@@ -892,15 +899,6 @@ async function collectManagementDiscoveryEvidence(company: CompanyCandidate, now
           "Backend adapter boundary is reserved for Composio web search, but runtime provider credentials are not configured in this app process yet.",
         contributes: ["public web discovery for leadership, board, LinkedIn, and prior outcomes"],
         missing: ["runtime Composio API credential", "search-result persistence", "candidate review queue"]
-      },
-      {
-        id: "fmp-company-executives",
-        name: "FMP company executives fallback",
-        status: "needs_key",
-        note:
-          "FMP company-executives can be used as a fallback if the subscribed plan includes that endpoint; current access should be treated as unavailable.",
-        contributes: ["executive roster fallback"],
-        missing: ["FMP endpoint entitlement", "issuer-source corroboration"]
       }
     ]
   };
@@ -1222,22 +1220,32 @@ function dedupeSources(sources: SourceDocument[]) {
 }
 
 export async function collectEvidence(company: CompanyCandidate, options: EvidenceOptions = {}): Promise<EvidenceCollectionResult> {
-  const fetcher = options.fetcher ?? fetch;
-  const rawBrowserFetcher = options.browserFetcher ?? createPlaywrightBrowserFetcher();
+  const fetcher = createTimeoutFetcher(options.fetcher ?? fetch, options.fetchTimeoutMs, options.signal);
+  const ownedBrowserFetcher = options.browserFetcher ? undefined : createPlaywrightBrowserFetcher();
+  const rawBrowserFetcher = options.browserFetcher ?? ownedBrowserFetcher;
   const browserFetcher = rawBrowserFetcher ? cachedBrowserFetcher(rawBrowserFetcher) : undefined;
-  const now = options.now?.() ?? retrievedAt();
-  const seeded = collectSources(company);
-  const [sec, sedar, website, issuerNews, newswire, management] = await Promise.all([
-    collectSecEvidence(company, fetcher, now),
-    collectSedarEvidence(company, fetcher, now),
-    collectCompanyWebsiteEvidence(company, fetcher, now, browserFetcher),
-    collectIssuerNewsEvidence(company, fetcher, now, browserFetcher),
-    collectNewswireEvidence(company, fetcher, now),
-    collectManagementDiscoveryEvidence(company, now)
-  ]);
-  const sources = dedupeSources([...seeded.sources, ...sec.sources, ...sedar.sources, ...website.sources, ...issuerNews.sources, ...newswire.sources, ...management.sources]);
-  const facts = extractEvidenceFacts(sources, now).filter((fact) => fact.sourceUrl && fact.excerpt);
-  const adapters = [...seeded.adapters, ...sec.adapters, ...sedar.adapters, ...website.adapters, ...issuerNews.adapters, ...newswire.adapters, ...management.adapters];
-  const status = buildStatus(facts, adapters, now);
-  return { sources, facts, status, gaps: status.gaps };
+  try {
+    const now = options.now?.() ?? retrievedAt();
+    const seeded = collectSources(company);
+    // Let every adapter settle before closing the browser shared by this run.
+    const results = await Promise.allSettled([
+      collectSecEvidence(company, fetcher, now),
+      collectSedarEvidence(company, fetcher, now),
+      collectCompanyWebsiteEvidence(company, fetcher, now, browserFetcher),
+      collectIssuerNewsEvidence(company, fetcher, now, browserFetcher),
+      collectNewswireEvidence(company, fetcher, now),
+      collectManagementDiscoveryEvidence(company, now)
+    ]);
+    const collected = results.map((result) => {
+      if (result.status === "rejected") throw result.reason;
+      return result.value;
+    });
+    const sources = dedupeSources([...seeded.sources, ...collected.flatMap((result) => result.sources)]);
+    const facts = extractEvidenceFacts(sources, now).filter((fact) => fact.sourceUrl && fact.excerpt);
+    const adapters = [...seeded.adapters, ...collected.flatMap((result) => result.adapters)];
+    const status = buildStatus(facts, adapters, now);
+    return { sources, facts, status, gaps: status.gaps };
+  } finally {
+    await ownedBrowserFetcher?.close?.();
+  }
 }

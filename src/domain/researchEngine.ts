@@ -109,7 +109,7 @@ function marketSignalsFrom(snapshot: MarketSnapshot): MarketSignals {
         : undefined,
     shareCountDriver:
       sharesOutstanding !== undefined
-        ? `Yahoo/FMP market data shows ${snapshot.sharesOutstanding} shares outstanding; fully diluted ownership still needs filings.`
+        ? `Yahoo Finance market data shows ${snapshot.sharesOutstanding} shares outstanding; fully diluted ownership still needs filings.`
         : undefined,
     rangeDriver:
       rangePosition !== undefined
@@ -330,7 +330,7 @@ function buildScorecard(company: CompanyCandidate, sources: SourceDocument[], fa
   const marketSignals = marketSignalsFrom(marketSnapshot);
   const coverage = buildEvidenceCoverage(sources, marketSignals, facts);
   const managementEvidence = buildManagementEvidence(company, sources, facts);
-  const evidenceAudit = buildEvidenceAudit(sources, marketSignals, coverage);
+  const evidenceAudit = buildEvidenceAudit(marketSignals, coverage);
   const evidenceScore = sources.length === 0 ? (marketSignals.hasMarketData ? 32 : 20) : Math.min(95, 35 + sources.length * 20 + (marketSignals.hasMarketData ? 8 : 0));
   const hasProject = hasAny(text, ["project", "deposit", "exploration", "drilling", "resource"]);
   const hasFinancingRisk = hasAny(text, ["additional financing", "need additional financing", "expects to need"]);
@@ -607,9 +607,9 @@ function buildScorecard(company: CompanyCandidate, sources: SourceDocument[], fa
   };
 }
 
-function buildEvidenceAudit(sources: SourceDocument[], marketSignals: MarketSignals, coverage: EvidenceCoverage): EvidenceAudit {
+function buildEvidenceAudit(marketSignals: MarketSignals, coverage: EvidenceCoverage): EvidenceAudit {
   const requirements = EVIDENCE_REQUIREMENTS.map((requirement): EvidenceRequirement => {
-    const available = requirementAvailable(requirement.id, sources, marketSignals, coverage);
+    const available = requirementAvailable(requirement.id, marketSignals, coverage);
     return { ...requirement, status: available ? "available" : "missing" };
   });
   return {
@@ -619,7 +619,7 @@ function buildEvidenceAudit(sources: SourceDocument[], marketSignals: MarketSign
   };
 }
 
-function requirementAvailable(requirementId: string, sources: SourceDocument[], marketSignals: MarketSignals, coverage: EvidenceCoverage) {
+function requirementAvailable(requirementId: string, marketSignals: MarketSignals, coverage: EvidenceCoverage) {
   switch (requirementId) {
     case "technical-report":
       return coverage.technicalReport;
@@ -1702,10 +1702,6 @@ function managementEvidenceConfidence(evidence: ManagementEvidence): ScoreCatego
   return "low";
 }
 
-function fallbackManagement(company: CompanyCandidate): ManagementPerson[] {
-  return buildManagementEvidence(company, [], []).people;
-}
-
 function buildMarketSnapshot(company: CompanyCandidate): MarketSnapshot {
   return (
     company.marketSnapshot ?? {
@@ -1716,8 +1712,7 @@ function buildMarketSnapshot(company: CompanyCandidate): MarketSnapshot {
       dataNeeded: [
         "Yahoo/YFinance quote data for current price, day change, volume, and 52-week range",
         "Yahoo quoteSummary data for shares outstanding, float, analyst targets, and summary financials",
-        "FMP quote/profile data as fallback when Yahoo misses fields",
-        "Fallback SEC/SEDAR filings when FMP does not cover insider, strategic, or fully diluted ownership"
+        "Current SEC/SEDAR filings to verify insider, strategic, or fully diluted ownership"
       ]
     }
   );
@@ -1758,7 +1753,7 @@ function fallbackShareStructure(company: CompanyCandidate, marketSnapshot: Marke
           ? "Shares outstanding can be seeded from market data, but float, insider, strategic, warrant, option, and fully diluted figures still need ownership-specific sourcing."
           : "Unknown until current share count, insider ownership, strategic holders, warrants, options, and recent financing terms are ingested.",
       notes: [
-        "Use Yahoo/FMP market data where available, then reconcile with filings before relying on ownership figures.",
+        "Use Yahoo Finance market data where available, then reconcile with filings before relying on ownership figures.",
         "Confirm basic shares outstanding, fully diluted shares, warrants, options, and restricted shares.",
         "Compare insider and strategic ownership against recent financings to judge alignment.",
         "Watch for cheap warrant overhang that could cap upside during strong news cycles."

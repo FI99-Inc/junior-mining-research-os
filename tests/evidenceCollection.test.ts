@@ -1,9 +1,174 @@
-import { describe, expect, it, vi } from "vitest";
-import { resolveCompany } from "../src/domain/companyResolver";
-import { collectEvidence, extractIssuerTeamPeople } from "../src/domain/evidencePipeline";
+// @vitest-environment node
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { COMPANY_UNIVERSE, resolveCompany } from "../src/domain/companyResolver";
+import { collectEvidence, createTimeoutFetcher, extractIssuerTeamPeople } from "../src/domain/evidencePipeline";
+import type { CompanyCandidate } from "../src/domain/types";
+
+const { launchBrowser } = vi.hoisted(() => ({ launchBrowser: vi.fn() }));
+vi.mock("playwright", () => ({ chromium: { launch: launchBrowser } }));
 
 const html = (body: string) => new Response(body, { headers: { "Content-Type": "text/html" } });
 const json = (body: unknown) => Response.json(body);
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+  launchBrowser.mockReset();
+});
+
+describe("available source providers", () => {
+  it.each(COMPANY_UNIVERSE)("$ticker reports Yahoo/YFinance as its only market-data adapter", async (company) => {
+    const evidence = await collectEvidence(company, {
+      fetcher: async () => new Response("", { status: 503 })
+    });
+    expect(evidence.status.adapters.filter((adapter) => adapter.id === "market-data")).toEqual([
+      expect.objectContaining({ name: "Yahoo/YFinance market data" })
+    ]);
+  });
+});
+
+describe("evidence resource lifecycle", () => {
+  const company: CompanyCandidate = {
+    id: "lifecycle-test",
+    name: "Test Mining",
+    ticker: "TEST",
+    exchange: "TSX",
+    country: "CA",
+    commodityFocus: ["Gold"],
+    websiteUrl: "https://example.com/"
+  };
+  const unavailable = async () => new Response("", { status: 404 });
+
+  function mockOwnedBrowser() {
+    vi.stubEnv("NODE_ENV", "production");
+    const close = vi.fn(async () => undefined);
+    launchBrowser.mockResolvedValue({
+      close,
+      newContext: vi.fn(async () => { throw new Error("Rendered page unavailable"); })
+    });
+    return close;
+  }
+
+  it("closes each owned browser without accumulating process exit listeners", async () => {
+    const close = mockOwnedBrowser();
+    const listeners = process.listenerCount("exit");
+    await collectEvidence(company, { fetcher: unavailable });
+    await collectEvidence(company, { fetcher: unavailable });
+    expect(close).toHaveBeenCalledTimes(2);
+    expect(process.listenerCount("exit")).toBe(listeners);
+  });
+
+  it("closes an owned browser when another adapter unexpectedly rejects", async () => {
+    const close = mockOwnedBrowser();
+    const failure = new Error("Roster unavailable");
+    const brokenCompany = { ...company, get management(): never { throw failure; } };
+    await expect(collectEvidence(brokenCompany, { fetcher: unavailable })).rejects.toBe(failure);
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it("waits for in-flight adapters before closing after an unexpected rejection", async () => {
+    const close = mockOwnedBrowser();
+    const failure = new Error("Roster unavailable");
+    const brokenCompany = { ...company, get management(): never { throw failure; } };
+    let release!: () => void;
+    let started!: () => void;
+    const waiting = new Promise<void>((resolve) => { started = resolve; });
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const fetcher = async () => {
+      started();
+      await gate;
+      return unavailable();
+    };
+    const rejected = expect(collectEvidence(brokenCompany, { fetcher })).rejects.toBe(failure);
+    await waiting;
+    expect(close).not.toHaveBeenCalled();
+    release();
+    await rejected;
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it("preserves caller-owned browser lifecycle on success and failure", async () => {
+    const close = vi.fn(async () => undefined);
+    const browserFetcher = Object.assign(async (url: string) => ({
+      url, finalUrl: url, title: "", html: "", text: "", links: [], mode: "playwright" as const, ok: false
+    }), { close });
+    await collectEvidence(company, { fetcher: unavailable, browserFetcher });
+    const failure = new Error("Roster unavailable");
+    const brokenCompany = { ...company, get management(): never { throw failure; } };
+    await expect(collectEvidence(brokenCompany, { fetcher: unavailable, browserFetcher })).rejects.toBe(failure);
+    expect(close).not.toHaveBeenCalled();
+  });
+
+  it("keeps browser launch and close failures non-fatal", async () => {
+    const close = mockOwnedBrowser();
+    close.mockRejectedValueOnce(new Error("Browser already disconnected"));
+    await expect(collectEvidence(company, { fetcher: unavailable })).resolves.toHaveProperty("status");
+    launchBrowser.mockRejectedValueOnce(new Error("Browser missing"));
+    await expect(collectEvidence(company, { fetcher: unavailable })).resolves.toHaveProperty("status");
+  });
+
+  it("times out stalled fetch fallbacks and returns partial evidence", async () => {
+    const browserFetcher = async (url: string) => ({
+      url, finalUrl: url, title: "", html: "", text: "", links: [], mode: "playwright" as const, ok: false
+    });
+    const signals: AbortSignal[] = [];
+    const fetcher: typeof fetch = async (_input, init) => {
+      expect(init?.signal).toBeTruthy();
+      const signal = init!.signal!;
+      signals.push(signal);
+      return new Promise<Response>((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    };
+    const result = await collectEvidence(company, { fetcher, browserFetcher, fetchTimeoutMs: 5 });
+    expect(signals.length).toBeGreaterThan(0);
+    expect(signals.every((signal) => signal.aborted)).toBe(true);
+    expect(result.status.adapters.find((adapter) => adapter.id === "company-website")?.status).toBe("needs_key");
+  });
+});
+
+describe("createTimeoutFetcher", () => {
+  it("bounds response body reads after headers have arrived", async () => {
+    const caller = new AbortController();
+    const request = new AbortController();
+    const init = new AbortController();
+    const fetcher: typeof fetch = async (_input, init) => new Response(new ReadableStream({
+      start(controller) {
+        init!.signal!.addEventListener("abort", () => controller.error(init!.signal!.reason), { once: true });
+      }
+    }));
+    const response = await createTimeoutFetcher(fetcher, 5, caller.signal)(
+      new Request("https://example.com/", { signal: request.signal }),
+      { signal: init.signal }
+    );
+    await expect(response.text()).rejects.toMatchObject({ name: "TimeoutError" });
+    expect([caller, request, init].every((controller) => !controller.signal.aborted)).toBe(true);
+  });
+
+  it.each(["collection", "request", "init"] as const)("preserves cancellation from the %s signal", async (origin) => {
+    const collection = new AbortController();
+    const request = new AbortController();
+    const init = new AbortController();
+    const fetcher = vi.fn<typeof fetch>(async () => html("ok"));
+    const input = new Request("https://example.com/", { signal: request.signal });
+    await createTimeoutFetcher(fetcher, 8000, collection.signal)(input, { signal: init.signal, headers: { Accept: "text/html" } });
+    const combined = fetcher.mock.calls[0][1]!.signal!;
+    const reason = new Error(`${origin} cancelled`);
+    ({ collection, request, init })[origin].abort(reason);
+    expect(combined.aborted).toBe(true);
+    expect(combined.reason).toBe(reason);
+    expect(fetcher).toHaveBeenCalledWith(input, expect.objectContaining({ headers: { Accept: "text/html" } }));
+  });
+
+  it("does not start a fetch when the caller is already aborted", async () => {
+    const controller = new AbortController();
+    const reason = new Error("Cancelled before collection");
+    controller.abort(reason);
+    const fetcher = vi.fn(async () => html("ok"));
+    await expect(createTimeoutFetcher(fetcher, 8000, controller.signal)("https://example.com/")).rejects.toBe(reason);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+});
 
 describe("collectEvidence", () => {
   it("extracts Faraday-style management people from issuer team pages", () => {

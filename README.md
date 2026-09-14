@@ -1,0 +1,59 @@
+# Junior Mining Research OS
+
+A private, browser-based research guide for Canada- and U.S.-listed junior mining companies. Enter a supported ticker or company name to generate a sourced report covering investment quality, market perspectives, management, risks, news, share structure, financials, and evidence provenance.
+
+The application is a research aid, not a buy/sell recommendation. Unsupported facts remain unavailable rather than being inferred.
+
+## Requirements
+
+- Node.js 22 or newer
+- pnpm 10 or newer
+- Google Chrome or Playwright Chromium for rendered issuer-site collection
+
+## Local development
+
+Install dependencies:
+
+```powershell
+pnpm.cmd install
+```
+
+Start the API in one terminal:
+
+```powershell
+pnpm.cmd server
+```
+
+Start the web app in a second terminal:
+
+```powershell
+pnpm.cmd dev
+```
+
+Open `http://127.0.0.1:5173/`. The Vite server proxies `/api` requests to the Express API at `http://127.0.0.1:4173/`.
+
+The only optional runtime setting is `PORT`, which changes the API port from `4173`. If changed, update the Vite proxy in `vite.config.ts` to match. No market-data API key is required.
+
+## Quality commands
+
+```powershell
+pnpm.cmd typecheck
+pnpm.cmd test
+pnpm.cmd build
+pnpm.cmd check
+```
+
+`check` runs strict typechecking, the complete Vitest suite, and the production build.
+
+## Architecture
+
+- `src/App.tsx`: report workspace and interaction state.
+- `src/api/researchApi.ts`: typed browser API requests and response-error handling.
+- `src/domain/companyResolver.ts`: supported company registry and search.
+- `src/domain/sourceAdapters.ts`: Yahoo Finance market, financial, forecast, and available ownership data.
+- `src/domain/evidencePipeline.ts`: SEC, SEDAR+, issuer-site, management, and news evidence collection.
+- `src/domain/researchEngine.ts`: evidence-aware scoring and report generation.
+- `server/app.ts`: Express routes and research-run orchestration.
+- `tests/`: API, domain, evidence, adapter, and rendered-component coverage.
+
+Research runs are stored in process memory and are cleared when the API restarts. Issuer websites and public data providers can be unavailable, stale, or incomplete; the UI preserves those gaps for diligence. See [market-data.md](docs/market-data.md) and [cleanup-audit.md](docs/cleanup-audit.md) for provider and maintenance details.

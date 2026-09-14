@@ -12,14 +12,22 @@ import {
   Sparkles,
   Users
 } from "lucide-react";
-import { FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
+import {
+  fetchResearchHistory,
+  requestResearchRun,
+  searchCompanyCandidates,
+  type ManualSourceDraft,
+  type ResearchRunResponse
+} from "./api/researchApi";
 import { COMPANY_UNIVERSE } from "./domain/companyResolver";
+import { managementHighlights } from "./domain/managementHighlights";
 import type {
   AnalystForecast,
+  AdapterStatus,
   CompanyCandidate,
   FinancialSnapshot,
   InvestorLens,
-  ManagementPerson,
   MarketSnapshot,
   NewsItem,
   RedFlag,
@@ -28,17 +36,8 @@ import type {
   SourceDocument
 } from "./domain/types";
 
-interface AdapterStatus {
-  id: string;
-  name: string;
-  status: "seeded" | "configured" | "needs_key" | "manual";
-  note: string;
-}
-
-type ResearchRunResponse = ResearchRun & { adapters?: AdapterStatus[] };
 type ReportTab = "scorecard" | "lenses" | "management" | "risks" | "news" | "shares" | "financials" | "sources";
 type TimelineHorizon = ResearchRun["scorecard"]["timelineScores"][number]["horizon"];
-type ManualSourceDraft = Pick<SourceDocument, "title" | "sourceType" | "publisher" | "url" | "excerpts">;
 
 const statusLabel: Record<AdapterStatus["status"], string> = {
   seeded: "Seeded",
@@ -48,94 +47,6 @@ const statusLabel: Record<AdapterStatus["status"], string> = {
 };
 
 const unavailable = "Unavailable";
-
-interface ManagementHighlight {
-  label: "Experience" | "Credential" | "Specialty" | "Profile";
-  value: string;
-}
-
-function firstSentence(value?: string) {
-  if (!value) return "";
-  const match = value.replace(/\s+/g, " ").trim().match(/^(.+?[.!?])(?:\s|$)/);
-  return match?.[1] ?? value;
-}
-
-function managementSpecialty(person: ManagementPerson) {
-  const text = `${person.role} ${person.bio} ${person.experience.join(" ")} ${person.trackRecord?.join(" ") ?? ""}`.toLowerCase();
-
-  if (/(chief financial|cfo|finance|capital markets|accounting|treasury|financing|audit)/.test(text)) {
-    return "Finance and capital markets oversight";
-  }
-  if (/(geolog|exploration|resource|discovery|drill|technical report|p\.?geo)/.test(text)) {
-    return "Exploration and geology focus";
-  }
-  if (/(metallurg|engineering|mine build|construction|operations|p\.?eng)/.test(text)) {
-    return "Technical execution and operations";
-  }
-  if (/(permitting|environment|sustainability|community|first nations|government)/.test(text)) {
-    return "Permitting, sustainability, and stakeholder work";
-  }
-  if (/(director|board|governance|committee)/.test(text) || person.group === "board") {
-    return "Board governance and oversight";
-  }
-  if (/(chief executive|ceo|president|founder|executive chair|leadership)/.test(text)) {
-    return "Corporate leadership and strategy";
-  }
-  return "";
-}
-
-function normalizeCredential(value: string) {
-  const compact = value.replace(/\s+/g, "").replace(/\.+$/g, "").toUpperCase();
-  const credentialMap: Record<string, string> = {
-    BSC: "B.Sc.",
-    MSC: "M.Sc.",
-    MBA: "MBA",
-    PGEO: "P.Geo.",
-    PENG: "P.Eng.",
-    CPA: "CPA",
-    CA: "CA",
-    CFA: "CFA",
-    PHD: "Ph.D.",
-    JD: "J.D."
-  };
-
-  return credentialMap[compact] ?? value.trim();
-}
-
-function managementCredentialSummary(source: string) {
-  const credentials = source.match(/\b(?:B\.?\s?Sc\.?|M\.?\s?Sc\.?|MBA|P\.?\s?Geo\.?|P\.?\s?Eng\.?|CPA|CA|CFA|Ph\.?\s?D\.?|J\.?\s?D\.?)\b/gi) ?? [];
-  const universities = source.match(/\bUniversity of [A-Z][A-Za-z .'-]+/g) ?? [];
-  const normalized = [...credentials.map(normalizeCredential), ...universities.map((item) => item.trim())];
-
-  return Array.from(new Set(normalized)).slice(0, 3).join(", ");
-}
-
-function managementExperienceSummary(source: string) {
-  const match = source.match(/\b(?:(?:more than|over|nearly|approximately|around)\s+)?(?:\d{1,2}\+?\s+years|two decades|three decades|four decades|decades)\b/i)?.[0];
-  if (!match) return "";
-
-  const phrase = match.charAt(0).toUpperCase() + match.slice(1);
-  return `${phrase} in mining, resources, or public-company execution`;
-}
-
-function managementHighlights(person: ManagementPerson) {
-  const source = `${person.bio} ${person.experience.join(" ")} ${person.trackRecord?.join(" ") ?? ""}`;
-  const highlights: ManagementHighlight[] = [];
-  const experience = managementExperienceSummary(source);
-  const credentials = managementCredentialSummary(source);
-  const specialty = managementSpecialty(person);
-
-  if (experience) highlights.push({ label: "Experience", value: experience });
-  if (credentials) highlights.push({ label: "Credential", value: credentials });
-  if (specialty) highlights.push({ label: "Specialty", value: specialty });
-
-  if (!highlights.length) {
-    const fallback = firstSentence(person.bio);
-    if (fallback) highlights.push({ label: "Profile", value: fallback });
-  }
-
-  return highlights.filter((item, index, list) => list.findIndex((candidate) => candidate.label === item.label && candidate.value === item.value) === index).slice(0, 3);
-}
 
 const NEWS_PIPELINE_SOURCES = [
   {
@@ -313,7 +224,7 @@ function TimelineSelector({
   );
 }
 
-function ExplorationGrid({ onResearch }: { onResearch: (company: CompanyCandidate) => void }) {
+function ExplorationGrid({ onResearch, loading }: { onResearch: (company: CompanyCandidate) => void; loading: boolean }) {
   return (
     <section className="explore-panel" aria-label="Explore companies">
       <div className="section-head compact-head">
@@ -333,7 +244,7 @@ function ExplorationGrid({ onResearch }: { onResearch: (company: CompanyCandidat
                 {company.exchange} - {company.stage ?? "Junior miner"} - {company.commodityFocus.join(", ")}
               </p>
             </div>
-            <button type="button" onClick={() => onResearch(company)}>
+            <button type="button" disabled={loading} onClick={() => onResearch(company)}>
               Research {company.ticker}
             </button>
           </article>
@@ -345,22 +256,29 @@ function ExplorationGrid({ onResearch }: { onResearch: (company: CompanyCandidat
 
 function SuggestionList({
   suggestions,
-  onPick
+  onPick,
+  id,
+  activeIndex
 }: {
   suggestions: CompanyCandidate[];
   onPick: (company: CompanyCandidate) => void;
+  id: string;
+  activeIndex: number;
 }) {
   if (!suggestions.length) return null;
 
   return (
-    <div className="suggestions" role="listbox" aria-label="Company suggestions">
-      {suggestions.map((company) => (
+    <div id={id} className="suggestions" role="listbox" aria-label="Company suggestions">
+      {suggestions.map((company, index) => (
         <button
           type="button"
           role="option"
-          aria-selected="false"
+          id={`${id}-${index}`}
+          aria-selected={activeIndex === index}
+          tabIndex={-1}
           className="suggestion"
           key={company.id}
+          onMouseDown={(event) => event.preventDefault()}
           onClick={() => onPick(company)}
         >
           <strong>{company.ticker}</strong>
@@ -402,6 +320,10 @@ function CompanySearchPanel({
   onPick: (company: CompanyCandidate) => void;
 }) {
   const inputId = `${idPrefix}-query`;
+  const listId = `${idPrefix}-suggestions`;
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const [dismissed, setDismissed] = useState(false);
+  const expanded = showSuggestions && !dismissed && suggestions.length > 0;
 
   return (
     <section className={`search-band ${compact ? "compact-search" : ""}`} data-testid={`${idPrefix}-search`}>
@@ -412,15 +334,41 @@ function CompanySearchPanel({
             <Search size={18} aria-hidden />
             <input
               id={inputId}
+              role="combobox"
+              aria-autocomplete="list"
+              aria-expanded={expanded}
+              aria-controls={expanded ? listId : undefined}
+              aria-activedescendant={expanded && activeIndex >= 0 && activeIndex < suggestions.length ? `${listId}-${activeIndex}` : undefined}
               value={query}
-              onChange={(event) => onQueryChange(event.target.value)}
-              onFocus={onFocus}
+              onChange={(event) => {
+                setActiveIndex(-1);
+                setDismissed(false);
+                onFocus();
+                onQueryChange(event.target.value);
+              }}
+              onFocus={() => { setDismissed(false); onFocus(); }}
+              onBlur={() => { setDismissed(true); setActiveIndex(-1); }}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  setDismissed(true);
+                  setActiveIndex(-1);
+                } else if ((event.key === "ArrowDown" || event.key === "ArrowUp") && suggestions.length) {
+                  event.preventDefault();
+                  setDismissed(false);
+                  setActiveIndex((index) => (index + (event.key === "ArrowDown" ? 1 : -1) + suggestions.length) % suggestions.length);
+                } else if (event.key === "Enter" && expanded && suggestions[activeIndex]) {
+                  event.preventDefault();
+                  onPick(suggestions[activeIndex]);
+                  setDismissed(true);
+                  setActiveIndex(-1);
+                }
+              }}
               placeholder="USGO, SGD.V, Snowline"
               autoComplete="off"
             />
-            {showSuggestions ? <SuggestionList suggestions={suggestions} onPick={onPick} /> : null}
+            {expanded ? <SuggestionList id={listId} activeIndex={activeIndex} suggestions={suggestions} onPick={onPick} /> : null}
           </div>
-          <button type="submit" disabled={loading}>
+          <button type="submit" disabled={loading || !query.trim()}>
             <Play size={18} aria-hidden />
             {loading ? "Running" : "Run Research"}
           </button>
@@ -429,7 +377,7 @@ function CompanySearchPanel({
       {showHelper ? (
         <p>Try USGO, SGD.V, GMIN.V, WRN, or FUU.V. The universe can expand cleanly from the company registry.</p>
       ) : null}
-      {error ? <div className="error">{error}</div> : null}
+      {error ? <div className="error" role="alert">{error}</div> : null}
     </section>
   );
 }
@@ -1155,6 +1103,7 @@ function ReportNav({ activeTab, onChange }: { activeTab: ReportTab; onChange: (t
         <button
           type="button"
           className={activeTab === tab.id ? "active" : ""}
+          aria-current={activeTab === tab.id ? "page" : undefined}
           key={tab.id}
           aria-label={tab.id === "shares" ? "Share structure" : undefined}
           onClick={() => onChange(tab.id)}
@@ -1206,18 +1155,27 @@ export default function App() {
   const [focusedSearch, setFocusedSearch] = useState<"sticky" | "hero" | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const researchRequest = useRef<AbortController | null>(null);
+  const reportHeading = useRef<HTMLHeadingElement>(null);
 
   async function loadHistory() {
-    const response = await fetch("/api/research-runs");
-    if (response.ok) setHistory(await response.json());
+    try {
+      setHistory(await fetchResearchHistory());
+    } catch {
+      // History is supplementary; its availability must not discard a report.
+    }
   }
 
   useEffect(() => {
-    loadHistory().catch(() => undefined);
+    void loadHistory();
+    return () => researchRequest.current?.abort();
   }, []);
+
+  useEffect(() => { reportHeading.current?.focus(); }, [run]);
 
   useEffect(() => {
     const trimmed = query.trim();
+    setSuggestions([]);
     if (!trimmed) {
       setSuggestions([]);
       return;
@@ -1226,8 +1184,8 @@ export default function App() {
     const controller = new AbortController();
     const timeout = window.setTimeout(async () => {
       try {
-        const response = await fetch(`/api/companies?q=${encodeURIComponent(trimmed)}`, { signal: controller.signal });
-        if (response.ok) setSuggestions(await response.json());
+        const matches = await searchCompanyCandidates(trimmed, controller.signal);
+        if (!controller.signal.aborted) setSuggestions(matches);
       } catch {
         if (!controller.signal.aborted) setSuggestions([]);
       }
@@ -1240,30 +1198,28 @@ export default function App() {
   }, [query]);
 
   async function runResearch(nextQuery = query) {
+    if (researchRequest.current || !nextQuery.trim()) return;
+    const controller = new AbortController();
+    researchRequest.current = controller;
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch("/api/research-runs", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: nextQuery, manualSources: importedSources })
-      });
-      if (!response.ok) {
-        const body = await response.json();
-        throw new Error(body.error ?? "Research run failed");
-      }
-      const nextRun = await response.json();
+      const nextRun = await requestResearchRun(nextQuery, importedSources, controller.signal);
+      if (controller.signal.aborted) return;
       setRun(nextRun);
       setQuery(nextQuery);
       setActiveTab("scorecard");
       setSelectedHorizon("1Y");
       setSuggestions([]);
       setFocusedSearch(null);
-      await loadHistory();
+      void loadHistory();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Research run failed");
+      if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "Research run failed");
     } finally {
-      setLoading(false);
+      if (researchRequest.current === controller) {
+        researchRequest.current = null;
+        setLoading(false);
+      }
     }
   }
 
@@ -1273,6 +1229,9 @@ export default function App() {
   }
 
   function goHome() {
+    researchRequest.current?.abort();
+    researchRequest.current = null;
+    setLoading(false);
     setRun(null);
     setActiveTab("scorecard");
     setSuggestions([]);
@@ -1288,6 +1247,7 @@ export default function App() {
 
   return (
     <main className="app-shell">
+      <div className="app-chrome">
       <header className="app-header">
         <div className="app-header-inner">
           <div>
@@ -1322,6 +1282,9 @@ export default function App() {
         </div>
       ) : null}
 
+      {run ? <ReportNav activeTab={activeTab} onChange={setActiveTab} /> : null}
+      </div>
+
       <section className={`hero ${run ? "research-hero" : ""}`}>
         <div className="topbar" aria-hidden="true" />
 
@@ -1354,7 +1317,7 @@ export default function App() {
               onFocus={() => setFocusedSearch("hero")}
               onPick={pickCompany}
             />
-            <ExplorationGrid onResearch={(company) => void runResearch(company.ticker)} />
+            <ExplorationGrid loading={loading} onResearch={(company) => void runResearch(company.ticker)} />
             <div className="home-import-panel">
               <SourceImportPanel
                 importedSources={importedSources}
@@ -1365,8 +1328,6 @@ export default function App() {
           </div>
         ) : null}
       </section>
-
-      {run ? <ReportNav activeTab={activeTab} onChange={setActiveTab} /> : null}
 
       {run ? (
       <section className="layout">
@@ -1403,13 +1364,14 @@ export default function App() {
         </aside>
 
         <section className="workspace">
+          {error ? <div className="error" role="alert">{error}</div> : null}
           <>
               <section className="report-header">
                 <div>
                   <p className="eyebrow">
                     {run.company.ticker} - {run.company.exchange} - {run.company.commodityFocus.join(", ")}
                   </p>
-                  <h2>{run.memo.title}</h2>
+                  <h2 ref={reportHeading} tabIndex={-1}>{run.memo.title}</h2>
                   <p>
                     A sourced, research-guide view of long-term feasibility. The overview combines project identity,
                     jurisdiction, commodity exposure, market-data readiness, and unresolved diligence items before the

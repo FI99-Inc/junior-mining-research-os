@@ -1,6 +1,3 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { homedir } from "node:os";
 import type { AdapterStatus, AnalystForecast, CompanyCandidate, FinancialSnapshot, MarketSnapshot, ShareStructure, SourceDocument } from "./types";
 
 const retrievedAt = "2026-06-29T12:00:00.000Z";
@@ -42,15 +39,6 @@ const seededSources: Record<string, SourceDocument[]> = {
         "The company reported drilling-focused exploration updates at the Whistler project.",
         "The update frames drill results and technical work as near-term catalysts for evaluating project scale."
       ]
-    },
-    {
-      id: "fmp-usgo-profile",
-      title: "Market profile adapter result",
-      sourceType: "market_data",
-      publisher: "FMP-style provider adapter",
-      url: "https://site.financialmodelingprep.com/developer/docs",
-      retrievedAt,
-      excerpts: ["Market-data adapter records ticker, exchange, and commodity exposure for the company profile."]
     }
   ],
   "snowline-gold": [
@@ -116,31 +104,6 @@ export interface SourceCollectionResult {
   adapters: AdapterStatus[];
 }
 
-interface FmpProfile {
-  symbol?: string;
-  price?: number;
-  marketCap?: number;
-  change?: number;
-  changePercentage?: number;
-  volume?: number;
-  averageVolume?: number;
-  range?: string;
-  currency?: string;
-}
-
-interface FmpSharesFloat {
-  date?: string;
-  freeFloat?: number;
-  floatShares?: number;
-  outstandingShares?: number;
-  source?: string;
-}
-
-interface FmpOptions {
-  apiKey?: string;
-  fetcher?: typeof fetch;
-}
-
 interface YahooQuote {
   symbol?: string;
   quoteType?: string;
@@ -165,7 +128,6 @@ interface YahooOptions {
 
 interface MarketSnapshotOptions {
   yahooFetcher?: typeof fetch;
-  fmpOptions?: FmpOptions;
 }
 
 interface MarketDataOptions extends MarketSnapshotOptions {
@@ -236,7 +198,6 @@ export interface YahooSupplementalData {
   shareStructure?: ShareStructure;
 }
 
-const FMP_DOCS_URL = "https://site.financialmodelingprep.com/developer/docs";
 const YAHOO_FINANCE_URL = "https://finance.yahoo.com/";
 
 const money = (value: number | undefined, currency = "USD") => {
@@ -265,18 +226,6 @@ const compactShares = (value: number | undefined) => {
   if (abs >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)}B`;
   if (abs >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
   return Math.round(value).toLocaleString();
-};
-
-const parseCompactValue = (value: string | undefined) => {
-  if (!value) return undefined;
-  const normalized = value.trim().replace(/[$,%]/g, "").replace(/,/g, "");
-  const match = normalized.match(/^(-?\d+(?:\.\d+)?)\s*([kmbt])?$/i);
-  if (!match) return undefined;
-  const number = Number(match[1]);
-  if (!Number.isFinite(number)) return undefined;
-  const suffix = match[2]?.toLowerCase();
-  const multiplier = suffix === "k" ? 1_000 : suffix === "m" ? 1_000_000 : suffix === "b" ? 1_000_000_000 : suffix === "t" ? 1_000_000_000_000 : 1;
-  return number * multiplier;
 };
 
 const wholeNumber = (value: number | undefined) =>
@@ -316,37 +265,6 @@ const dateFrom = (value: Date | number | string | undefined) => {
     ? undefined
     : date.toISOString().slice(0, 10);
 };
-
-const rangeParts = (range: string | undefined) => {
-  if (!range) return {};
-  const [low, high] = range.split("-").map((part) => Number(part.trim()));
-  return {
-    low: Number.isFinite(low) ? low : undefined,
-    high: Number.isFinite(high) ? high : undefined
-  };
-};
-
-function resolveFmpApiKey(explicit?: string) {
-  if (explicit) return explicit;
-  if (process.env.FMP_API_KEY) return process.env.FMP_API_KEY;
-
-  try {
-    const config = readFileSync(join(homedir(), ".codex", "config.toml"), "utf8");
-    const server = /\[mcp_servers\.fmp\][\s\S]*?url\s*=\s*"([^"]+)"/.exec(config);
-    const url = server?.[1];
-    const key = url ? /apikey=([^&"\s]+)/.exec(url)?.[1] : undefined;
-    return key;
-  } catch {
-    return undefined;
-  }
-}
-
-async function fetchJson<T>(url: string, fetcher: typeof fetch): Promise<T[]> {
-  const response = await fetcher(url);
-  if (!response.ok) throw new Error(`FMP request failed with ${response.status}`);
-  const body = await response.json();
-  return Array.isArray(body) ? (body as T[]) : [body as T];
-}
 
 export function normalizeYahooSymbol(company: CompanyCandidate) {
   return company.ticker.trim().toUpperCase();
@@ -533,42 +451,7 @@ export async function collectMarketData(
       : collectYahooSupplementalData(company, options.yahooSummaryFetcher)
   ]);
 
-  return { marketSnapshot, supplemental: reconcileSupplementalWithMarketSnapshot(supplemental, marketSnapshot) };
-}
-
-function reconcileSupplementalWithMarketSnapshot(
-  supplemental: YahooSupplementalData,
-  marketSnapshot: MarketSnapshot
-): YahooSupplementalData {
-  if (!supplemental.shareStructure || !marketSnapshot.sharesOutstanding || !/FMP fallback/.test(marketSnapshot.sourceLabel)) {
-    return supplemental;
-  }
-
-  const marketShares = parseCompactValue(marketSnapshot.sharesOutstanding);
-  const supplementalShares = parseCompactValue(supplemental.shareStructure.sharesOutstanding);
-  const publicFloat = parseCompactValue(supplemental.shareStructure.publicFloat);
-  if (!marketShares || supplementalShares === marketShares) return supplemental;
-
-  const publicFloatLooksStale = publicFloat !== undefined && publicFloat > marketShares;
-  return {
-    ...supplemental,
-    shareStructure: {
-      ...supplemental.shareStructure,
-      asOf: marketSnapshot.asOf,
-      sharesOutstanding: marketSnapshot.sharesOutstanding,
-      publicFloat: publicFloatLooksStale ? undefined : supplemental.shareStructure.publicFloat,
-      floatQuality: publicFloatLooksStale
-        ? "FMP provided a newer outstanding-share count than Yahoo; Yahoo public float was suppressed because it exceeded the newer share count and needs filing reconciliation."
-        : supplemental.shareStructure.floatQuality,
-      notes: Array.from(
-        new Set([
-          "FMP shares-float data corrected Yahoo's stale outstanding-share count; reconcile against the latest filing before relying on ownership conclusions.",
-          ...supplemental.shareStructure.notes
-        ])
-      ),
-      sourceUrl: marketSnapshot.sourceUrl ?? supplemental.shareStructure.sourceUrl
-    }
-  };
+  return { marketSnapshot, supplemental };
 }
 
 export async function collectYahooMarketSnapshot(
@@ -634,146 +517,26 @@ function mapYahooQuoteToMarketSnapshot(
   };
 }
 
-function isCompleteMarketSnapshot(snapshot: MarketSnapshot) {
-  return Boolean(
-    snapshot.price &&
-      snapshot.changePercent &&
-      snapshot.marketCap &&
-      snapshot.volume &&
-      snapshot.averageVolume &&
-      snapshot.fiftyTwoWeekHigh &&
-      snapshot.fiftyTwoWeekLow &&
-      snapshot.sharesOutstanding
-  );
-}
-
-function snapshotDateValue(snapshot: MarketSnapshot) {
-  if (!snapshot.asOf || snapshot.asOf === "Unavailable") return undefined;
-  const date = new Date(`${snapshot.asOf.slice(0, 10)}T00:00:00.000Z`);
-  return Number.isNaN(date.valueOf()) ? undefined : date.valueOf();
-}
-
-function needsFreshnessCrossCheck(snapshot: MarketSnapshot) {
-  const asOf = snapshotDateValue(snapshot);
-  if (!asOf) return true;
-  return asOf < Date.now() - 5 * 24 * 60 * 60 * 1000;
-}
-
-function mergeMarketSnapshots(primary: MarketSnapshot, fallback: MarketSnapshot): MarketSnapshot {
-  const fallbackIsNewer =
-    (snapshotDateValue(fallback) ?? 0) > (snapshotDateValue(primary) ?? Number.NEGATIVE_INFINITY);
-  const selectField = <K extends keyof MarketSnapshot>(field: K) =>
-    fallbackIsNewer ? fallback[field] ?? primary[field] : primary[field] ?? fallback[field];
-  return {
-    ...primary,
-    price: selectField("price"),
-    currency: selectField("currency"),
-    changePercent: selectField("changePercent"),
-    marketCap: selectField("marketCap"),
-    volume: selectField("volume"),
-    averageVolume: selectField("averageVolume"),
-    fiftyTwoWeekHigh: selectField("fiftyTwoWeekHigh"),
-    fiftyTwoWeekLow: selectField("fiftyTwoWeekLow"),
-    sharesOutstanding: selectField("sharesOutstanding"),
-    sourceLabel: "Yahoo Finance + FMP fallback",
-    sourceUrl: primary.sourceUrl ?? fallback.sourceUrl,
-    asOf: selectField("asOf"),
-    dataNeeded: Array.from(new Set([...primary.dataNeeded, ...fallback.dataNeeded]))
-  };
-}
-
 export async function collectMarketSnapshot(
   company: CompanyCandidate,
   options: MarketSnapshotOptions = {}
 ): Promise<MarketSnapshot> {
   const yahoo = await collectYahooMarketSnapshot(company, { fetcher: options.yahooFetcher });
-  if (yahoo && isCompleteMarketSnapshot(yahoo) && !needsFreshnessCrossCheck(yahoo)) return yahoo;
-
-  const fmp = await collectFmpMarketSnapshot(company, options.fmpOptions);
-  if (yahoo && fmp) return mergeMarketSnapshots(yahoo, fmp);
   if (yahoo) return yahoo;
-  if (fmp) return { ...fmp, sourceLabel: "FMP fallback" };
 
   return {
     status: "not_sourced",
-    sourceLabel: "Yahoo Finance and FMP unavailable",
+    sourceLabel: "Yahoo Finance unavailable",
     sourceUrl: YAHOO_FINANCE_URL,
     asOf: "Unavailable",
     dataNeeded: [
       "Yahoo Finance/YFinance did not return usable market data for this ticker.",
-      "FMP did not return usable market data for this ticker.",
       "Use filings, issuer presentations, or manual import for share structure until a market-data source is available."
     ]
   };
 }
 
-export async function collectFmpMarketSnapshot(
-  company: CompanyCandidate,
-  options: FmpOptions = {}
-): Promise<MarketSnapshot | undefined> {
-  const apiKey = resolveFmpApiKey(options.apiKey);
-  if (!apiKey) return undefined;
-
-  const fetcher = options.fetcher ?? fetch;
-  const snapshots: MarketSnapshot[] = [];
-  for (const symbol of yahooSupplementalSymbolCandidates(company)) {
-    const snapshot = await collectFmpMarketSnapshotForSymbol(symbol, apiKey, fetcher);
-    if (snapshot) snapshots.push(snapshot);
-  }
-
-  return snapshots.sort((a, b) => (snapshotDateValue(b) ?? 0) - (snapshotDateValue(a) ?? 0))[0];
-}
-
-async function collectFmpMarketSnapshotForSymbol(
-  rawSymbol: string,
-  apiKey: string,
-  fetcher: typeof fetch
-): Promise<MarketSnapshot | undefined> {
-  const symbol = encodeURIComponent(rawSymbol);
-  const profileUrl = `https://financialmodelingprep.com/stable/profile?symbol=${symbol}&apikey=${encodeURIComponent(apiKey)}`;
-  const sharesUrl = `https://financialmodelingprep.com/stable/shares-float?symbol=${symbol}&apikey=${encodeURIComponent(apiKey)}`;
-
-  try {
-    const [profileRows, shareRows] = await Promise.all([
-      fetchJson<FmpProfile>(profileUrl, fetcher),
-      fetchJson<FmpSharesFloat>(sharesUrl, fetcher).catch(() => [] as FmpSharesFloat[])
-    ]);
-    const profile = profileRows[0];
-    if (!profile) return undefined;
-
-    const shares = shareRows[0];
-    const range = rangeParts(profile.range);
-    const currency = profile.currency ?? "USD";
-    const change = signedMoney(profile.change, currency);
-    const percent = signedPercent(profile.changePercentage);
-
-    return {
-      status: "sourced",
-      price: money(profile.price, currency),
-      currency,
-      changePercent: change && percent ? `${change} (${percent})` : percent ?? change,
-      marketCap: compactMoney(profile.marketCap),
-      volume: wholeNumber(profile.volume),
-      averageVolume: wholeNumber(profile.averageVolume),
-      fiftyTwoWeekHigh: money(range.high, currency),
-      fiftyTwoWeekLow: money(range.low, currency),
-      sharesOutstanding: compactShares(shares?.outstandingShares),
-      sourceLabel: "FMP profile and shares-float",
-      sourceUrl: FMP_DOCS_URL,
-      asOf: dateFrom(shares?.date) ?? new Date().toISOString().slice(0, 10),
-      dataNeeded: [
-        "FMP quote endpoint remains useful for intraday quote-specific fields when subscription coverage allows it.",
-        "Reconcile FMP float/outstanding shares with latest filings before relying on ownership conclusions.",
-        "Insider, strategic, warrant, option, and fully diluted ownership still require filings or a richer ownership dataset."
-      ]
-    };
-  } catch {
-    return undefined;
-  }
-}
-
 export function collectSources(company: CompanyCandidate): SourceCollectionResult {
-  const marketProviderConfigured = true;
   return {
     sources: seededSources[company.id] ?? [],
     adapters: [
@@ -795,9 +558,9 @@ export function collectSources(company: CompanyCandidate): SourceCollectionResul
       },
       {
         id: "market-data",
-        name: "Yahoo/YFinance and FMP market data",
-        status: marketProviderConfigured ? "configured" : "needs_key",
-        note: "Yahoo Finance/YFinance is the primary market-data source; FMP is used as a fallback for missing quote fields.",
+        name: "Yahoo/YFinance market data",
+        status: "configured",
+        note: "Yahoo Finance/YFinance supplies market data where available; missing quote fields remain unavailable.",
         contributes: [
           "current price",
           "market cap",

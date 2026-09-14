@@ -1,4 +1,6 @@
 :root {
+  --border: #d9dfda;
+  --accent: #1c5c49;
   color: #18211e;
   background: #f5f7f4;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -38,10 +40,32 @@ button {
   background: #f5f7f4;
 }
 
-.app-header {
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+:where(button, a, summary, input, select, textarea):focus-visible {
+  outline: 3px solid #b47d20;
+  outline-offset: 3px;
+}
+
+:where(section, article, aside, form, dl, .workspace, .suggestion-wrap) {
+  min-width: 0;
+}
+
+:where(p, li, dd, h1, h2, h3, h4, strong, a) {
+  overflow-wrap: anywhere;
+}
+
+.app-chrome {
   position: sticky;
   top: 0;
   z-index: 40;
+  background: #f5f7f4;
+}
+
+.app-header {
   background: #121f1c;
   color: #fff;
   box-shadow: 0 10px 30px rgba(18, 31, 28, 0.18);
@@ -54,17 +78,15 @@ button {
   gap: 18px;
   width: min(1480px, calc(100% - 32px));
   margin: 0 auto;
-  padding: 16px 0;
+  padding: 12px 0;
 }
 
 .app-header h1 {
-  font-size: clamp(1.6rem, 2.6vw, 2.8rem);
+  font-size: 1.65rem;
+  line-height: 1.15;
 }
 
 .sticky-search-shell {
-  position: sticky;
-  top: 82px;
-  z-index: 35;
   border-bottom: 1px solid rgba(24, 33, 30, 0.12);
   background: rgba(245, 247, 244, 0.94);
   backdrop-filter: blur(14px);
@@ -153,15 +175,15 @@ p {
 
 h1 {
   margin-bottom: 0;
-  font-size: clamp(2rem, 4vw, 4.4rem);
+  font-size: 2rem;
   line-height: 0.98;
 }
 
 .hero-copy h2 {
   margin-bottom: 10px;
   max-width: 700px;
-  font-size: clamp(2.1rem, 4vw, 4.7rem);
-  line-height: 0.98;
+  font-size: 2.65rem;
+  line-height: 1.1;
 }
 
 h2 {
@@ -242,16 +264,16 @@ small {
 }
 
 .compact-search input {
-  min-height: 38px;
+  min-height: 44px;
 }
 
 .compact-search .suggestion-wrap > svg {
-  top: 10px;
+  top: 13px;
 }
 
 .compact-search .search-row button[type="submit"] {
   min-width: 136px;
-  min-height: 38px;
+  min-height: 44px;
   padding: 0 14px;
 }
 
@@ -305,6 +327,10 @@ small {
   color: #fff;
   font-size: 0.98rem;
   font-weight: 850;
+}
+
+.explore-panel .explore-name {
+  color: #fff;
 }
 
 .explore-card p {
@@ -436,14 +462,16 @@ button:disabled {
   outline: none;
 }
 
+.suggestion[aria-selected="true"] {
+  background: #e4eee8;
+  box-shadow: inset 3px 0 var(--accent);
+}
+
 .suggestion small {
   grid-column: 2;
 }
 
 .section-nav {
-  position: sticky;
-  z-index: 10;
-  top: 82px;
   display: flex;
   gap: 8px;
   overflow-x: auto;
@@ -453,6 +481,7 @@ button:disabled {
 }
 
 .section-nav button {
+  min-height: 44px;
   padding: 8px 12px;
   border: 1px solid rgba(24, 33, 30, 0.12);
   border-radius: 999px;
@@ -572,7 +601,15 @@ button:disabled {
 .report-header h2 {
   display: block;
   margin: 0 0 10px;
-  font-size: clamp(1.6rem, 3vw, 2.7rem);
+  font-size: 2rem;
+}
+
+.report-header h2:focus {
+  outline: none;
+}
+
+.company-overview p:last-of-type {
+  margin-bottom: 0;
 }
 
 .company-overview {
@@ -2197,19 +2234,49 @@ button:disabled {
   .summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .hero-copy h2 {
+    font-size: 2rem;
+  }
+
+  .explore-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 720px) {
   .topbar,
-  .app-header-inner,
   .report-header {
     align-items: flex-start;
     flex-direction: column;
   }
 
-  .sticky-search-shell,
-  .section-nav {
-    top: 111px;
+  .app-header-inner {
+    gap: 10px;
+  }
+
+  .app-header h1 {
+    font-size: 1.15rem;
+  }
+
+  .app-header .eyebrow {
+    font-size: 0.65rem;
+    margin-bottom: 4px;
+  }
+
+  .hero-copy h2,
+  .report-header h2 {
+    font-size: 1.65rem;
+  }
+
+  .hero-grid {
+    gap: 16px;
+    padding: 20px 0;
+  }
+
+  .collection-status-grid,
+  .evidence-fact-strip {
+    grid-template-columns: 1fr;
   }
 
   .topbar,
@@ -2224,14 +2291,58 @@ button:disabled {
   .search-row,
   .score-row,
   .company-overview dl,
-  .summary-grid,
-  .market-metric-grid,
-  .financial-grid {
+  .summary-grid {
     grid-template-columns: 1fr;
   }
 
   .compact-search form {
     grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .compact-search .search-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 6px;
+  }
+
+  .compact-search .search-row button[type="submit"] {
+    min-width: 0;
+    padding: 0 10px;
+    font-size: 0.8rem;
+  }
+
+  .compact-search .search-row button[type="submit"] svg {
+    display: none;
+  }
+
+  .market-metric-grid,
+  .financial-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .market-metric strong,
+  .financial-grid strong {
+    font-size: 1rem;
+  }
+
+  .explore-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .explore-card {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    min-height: 0;
+  }
+
+  .explore-card button {
+    padding: 8px;
+    min-height: 44px;
+    font-size: 0.75rem;
+  }
+
+  .support-disclosure summary {
+    flex-wrap: wrap;
   }
 
   .share-card.wide {
@@ -2244,5 +2355,18 @@ button:disabled {
 
   .search-row button[type="submit"] {
     width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
   }
 }

@@ -190,7 +190,7 @@ describe("createResearchRun", () => {
       expect.arrayContaining([expect.stringContaining("project")])
     );
     expect(run.marketSnapshot.status).toBe("not_sourced");
-    expect(run.marketSnapshot.dataNeeded).toEqual(expect.arrayContaining([expect.stringContaining("FMP")]));
+    expect(run.marketSnapshot.dataNeeded).toEqual(expect.arrayContaining([expect.stringContaining("Yahoo")]));
     expect(run.management).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -606,8 +606,8 @@ describe("createResearchRun", () => {
           fiftyTwoWeekHigh: "$2.40",
           fiftyTwoWeekLow: "$0.80",
           sharesOutstanding: "14.6M",
-          sourceLabel: "FMP profile and shares-float",
-          sourceUrl: "https://site.financialmodelingprep.com/developer/docs",
+          sourceLabel: "Yahoo Finance via YFinance",
+          sourceUrl: "https://finance.yahoo.com/quote/USGO",
           asOf: "2026-06-30",
           dataNeeded: []
         }
