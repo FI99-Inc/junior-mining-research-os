@@ -41,3 +41,11 @@ Audit date: 2026-09-10. Scope: local repository and local application; no public
 - The unused direct `zod` dependency was removed. The transitive version required by `yahoo-finance2` remains managed by that package.
 - Added `typecheck` and `check` scripts and a concise README covering setup, architecture, commands, and known limitations.
 - Final command outcomes are recorded in the implementation report for this change.
+
+## Evidence provenance checkpoint
+
+- Removed fixed-date evidence, example URLs, and narrative source excerpts from production adapters.
+- SEC filing records become evidence only after the filing document body is retrieved; SEDAR+ reachability remains adapter status until an issuer document is available.
+- Issuer links discovered during crawling remain status metadata until their pages are retrieved and parsed.
+- Registry management entries remain unverified display context and cannot raise management evidence confidence or scoring without current issuer, filing, or user-supplied support.
+- Reusable synthetic research scenarios are isolated under `tests/fixtures/`.

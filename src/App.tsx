@@ -40,13 +40,20 @@ type ReportTab = "scorecard" | "lenses" | "management" | "risks" | "news" | "sha
 type TimelineHorizon = ResearchRun["scorecard"]["timelineScores"][number]["horizon"];
 
 const statusLabel: Record<AdapterStatus["status"], string> = {
-  seeded: "Seeded",
   configured: "Configured",
   needs_key: "Needs key",
   manual: "Manual"
 };
 
 const unavailable = "Unavailable";
+
+function isHttpUrl(value: string) {
+  try {
+    return ["http:", "https:"].includes(new URL(value).protocol);
+  } catch {
+    return false;
+  }
+}
 
 const NEWS_PIPELINE_SOURCES = [
   {
@@ -433,18 +440,20 @@ function SourceImportPanel({
   const [url, setUrl] = useState("");
   const [evidenceText, setEvidenceText] = useState("");
   const [sourceType, setSourceType] = useState<ManualSourceDraft["sourceType"]>("manual");
+  const sourceUrl = url.trim();
+  const canAddSource = Boolean(title.trim() && isHttpUrl(sourceUrl) && evidenceText.trim());
 
   function addSource() {
     const excerpts = evidenceText
       .split(/\n{2,}/)
       .map((excerpt) => excerpt.trim())
       .filter(Boolean);
-    if (!title.trim() || excerpts.length === 0) return;
+    if (!canAddSource || excerpts.length === 0) return;
     onAdd({
       title: title.trim(),
       sourceType,
       publisher: "Issuer document import",
-      url: url.trim() || "Manual source",
+      url: sourceUrl,
       excerpts
     });
     setTitle("");
@@ -477,6 +486,8 @@ function SourceImportPanel({
           Source URL
           <input
             id="manual-source-url"
+            type="url"
+            required
             value={url}
             onChange={(event) => setUrl(event.target.value)}
             placeholder="https://company.com/presentation.pdf"
@@ -502,7 +513,7 @@ function SourceImportPanel({
         />
       </label>
       <div className="source-import-actions">
-        <button type="button" onClick={addSource}>
+        <button type="button" onClick={addSource} disabled={!canAddSource}>
           Add Source
         </button>
         {importedSources.length ? (

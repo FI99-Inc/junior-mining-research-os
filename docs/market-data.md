@@ -8,6 +8,6 @@ Yahoo Finance, accessed through the server-side `yahoo-finance2` package, is the
 - Missing fields stay unavailable. A provider failure produces a `not_sourced` snapshot without contacting a second provider.
 - Issuer websites, SEC/SEDAR disclosure discovery, and news feeds remain separate evidence sources. Yahoo summaries do not establish fully diluted ownership, warrant schedules, technical reports, or management track records.
 
-The previous secondary provider was removed from the application on 2026-09-13, including its fallback requests, credential lookup, seeded source, and adapter status. External Codex configuration and credentials were not modified. Previously generated in-memory reports retain their original provenance until a new research run is created.
+Market data is separate from research evidence. Regulatory, issuer, management, and news claims enter a report only when the current run retrieves the supporting document or the user explicitly supplies a source. Portal availability and discovered links remain collection status until document content is available.
 
 The Mermaid architecture source and its PNG/SVG exports reflect the current provider inventory.

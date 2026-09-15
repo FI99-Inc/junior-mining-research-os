@@ -30,6 +30,8 @@ export interface SourceDocument {
   url: string;
   retrievedAt: string;
   excerpts: string[];
+  imageUrl?: string;
+  managementGroup?: "executive" | "board" | "technical" | "advisor" | "project_lead";
 }
 
 export type EvidenceFactCategory =
@@ -83,7 +85,7 @@ export interface EvidenceCollectionStatus {
 export interface AdapterStatus {
   id: string;
   name: string;
-  status: "seeded" | "configured" | "needs_key" | "manual";
+  status: "configured" | "needs_key" | "manual";
   note: string;
   contributes: string[];
   missing: string[];

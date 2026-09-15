@@ -217,13 +217,14 @@ describe("API app", () => {
     });
   });
 
-  it("preserves trimmed queries and tolerant manual source normalization", async () => {
+  it("accepts only manual evidence with an explicit source URL and excerpts", async () => {
     await withApi(async (baseUrl) => {
       const response = await postResearch(baseUrl, JSON.stringify({
         query: "  USGO  ",
         manualSources: [
           null, 7, {}, { title: "No excerpts" },
-          { title: "  Imported disclosure  ", publisher: " ", url: " ", sourceType: "unknown", excerpts: [123, " ", " Cash balance "] },
+          { title: "  Imported disclosure  ", publisher: " ", url: "https://issuer.example/disclosure", sourceType: "unknown", excerpts: [123, " ", " Cash balance "] },
+          { title: "Missing URL", url: " ", excerpts: ["Should not enter the run"] },
           { title: 456, excerptText: "First paragraph\n\nSecond paragraph" }
         ]
       }));
@@ -231,8 +232,7 @@ describe("API app", () => {
       const report = await response.json();
       expect(report.company.ticker).toBe("USGO");
       expect(report.sources.filter((source: { id: string }) => source.id.startsWith("manual-"))).toEqual([
-        expect.objectContaining({ title: "Imported disclosure", publisher: "Issuer document import", url: "Manual source", sourceType: "manual", excerpts: ["123", "Cash balance"] }),
-        expect.objectContaining({ title: "456", excerpts: ["First paragraph", "Second paragraph"] })
+        expect.objectContaining({ title: "Imported disclosure", publisher: "Issuer document import", url: "https://issuer.example/disclosure", sourceType: "manual", excerpts: ["123", "Cash balance"] })
       ]);
       expect(report.adapters).toEqual(report.evidenceStatus.adapters);
     });

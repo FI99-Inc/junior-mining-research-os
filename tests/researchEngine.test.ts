@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createResearchRun } from "../src/domain/researchEngine";
-import { collectSources } from "../src/domain/sourceAdapters";
+import { sourceAdapterStatuses } from "../src/domain/sourceAdapters";
 import type { CompanyCandidate, EvidenceFact, SourceDocument } from "../src/domain/types";
 
 const candidate: CompanyCandidate = {
@@ -264,7 +264,7 @@ describe("createResearchRun", () => {
     expect(run.sources).toHaveLength(0);
   });
 
-  it("marks LinkedIn-only management candidates as likely matches without exposing match details", () => {
+  it("marks sourced public-profile candidates as likely matches without exposing match details", () => {
     const run = createResearchRun(
       {
         ...candidate,
@@ -278,7 +278,17 @@ describe("createResearchRun", () => {
           }
         ]
       },
-      [],
+      [
+        {
+          id: "public-profile-tim-smith",
+          title: "Tim Smith public profile candidate",
+          sourceType: "manual",
+          publisher: "Public profile search",
+          url: "https://www.linkedin.com/in/timsmith",
+          retrievedAt: "2026-07-04T12:00:00.000Z",
+          excerpts: ["Tim Smith Chief Executive Officer mining executive profile"]
+        }
+      ],
       "USGO"
     );
 
@@ -338,11 +348,11 @@ describe("createResearchRun", () => {
           url: "https://www.usgoldmining.us/company/management",
           retrievedAt: "2026-07-04T12:00:00.000Z",
           excerpts: [
-            "Issuer website management biography: Jane Doe is listed as Vice President, Exploration.",
-            "Issuer team group: technical.",
-            "Issuer profile image: https://www.usgoldmining.us/jane.jpg.",
+            "Jane Doe Vice President, Exploration",
             "Jane Doe is a geologist with discovery, mine development, acquisition, and public-company financing experience."
-          ]
+          ],
+          imageUrl: "https://www.usgoldmining.us/jane.jpg",
+          managementGroup: "technical"
         }
       ],
       "USGO"
@@ -397,11 +407,10 @@ describe("createResearchRun", () => {
           url: "https://www.usgoldmining.us/company/management",
           retrievedAt: "2026-07-04T12:00:00.000Z",
           excerpts: [
-            "Issuer website management biography: Tim Smith is listed as President and Chief Executive Officer.",
-            "Issuer team group: executive.",
-            "Issuer profile image: unavailable.",
+            "Tim Smith President and Chief Executive Officer",
             "Tim Smith has led mining exploration projects, public-company financings, and project development programs."
-          ]
+          ],
+          managementGroup: "executive"
         }
       ],
       "USGO"
@@ -413,7 +422,7 @@ describe("createResearchRun", () => {
       expect.objectContaining({
         sourceStatus: "issuer",
         sourceUrl: "https://www.usgoldmining.us/company/management",
-        linkedInStatus: "likely_match",
+        linkedInStatus: "needs_review",
         bio: expect.stringContaining("public-company financings")
       })
     );
@@ -511,6 +520,24 @@ describe("createResearchRun", () => {
       managementRichCompany,
       [
         ...richConfidenceSources,
+        ...managementRichCompany.management!.map((person, index) => ({
+          id: `issuer-team-rich-${index}`,
+          title: `${person.name} - ${person.role}`,
+          sourceType: "manual" as const,
+          publisher: "Issuer team page",
+          url: "https://example.com/team",
+          retrievedAt: "2026-07-05T12:00:00.000Z",
+          excerpts: [`${person.name} ${person.role}`, person.bio]
+        })),
+        {
+          id: "issuer-linkedin-alex-builder",
+          title: "Alex Builder public profile",
+          sourceType: "manual",
+          publisher: "Issuer profile link",
+          url: "https://www.linkedin.com/in/alexbuilder",
+          retrievedAt: "2026-07-05T12:00:00.000Z",
+          excerpts: ["Alex Builder Chief Executive Officer mining"]
+        },
         {
           id: "proxy-management",
           title: "Management information circular",
@@ -541,7 +568,7 @@ describe("createResearchRun", () => {
     );
   });
 
-  it("does not let LinkedIn-only profiles create a strong management score", () => {
+  it("does not let registry-only LinkedIn profiles create a strong management score", () => {
     const run = createResearchRun(
       {
         ...candidate,
@@ -569,14 +596,14 @@ describe("createResearchRun", () => {
     const management = run.scorecard.categories.find((item) => item.key === "management");
     expect(management?.score).toBeLessThanOrEqual(55);
     expect(management?.confidence).toBe("low");
-    expect(run.managementEvidence.confidenceSignals.find((signal) => signal.id === "verified-profiles")?.status).toBe("watch");
+    expect(run.managementEvidence.confidenceSignals.find((signal) => signal.id === "verified-profiles")?.status).toBe("gap");
     expect(run.managementEvidence.gaps).toEqual(expect.arrayContaining([expect.stringContaining("issuer, filing, or circular evidence")]));
   });
 
   it("describes source adapter contributions and missing data", () => {
-    const collected = collectSources(candidate);
+    const adapters = sourceAdapterStatuses(candidate);
 
-    expect(collected.adapters).toEqual(
+    expect(adapters).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           id: "sec-edgar",

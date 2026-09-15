@@ -57,3 +57,11 @@ pnpm.cmd check
 - `tests/`: API, domain, evidence, adapter, and rendered-component coverage.
 
 Research runs are stored in process memory and are cleared when the API restarts. Issuer websites and public data providers can be unavailable, stale, or incomplete; the UI preserves those gaps for diligence. See [market-data.md](docs/market-data.md) and [cleanup-audit.md](docs/cleanup-audit.md) for provider and maintenance details.
+
+## Evidence provenance
+
+- Automated evidence is accepted only after the referenced document or page is retrieved during the current research run.
+- Regulatory portal availability and discovered-but-unretrieved links are reported as adapter status or missing-data gaps, not evidence.
+- Manual evidence is included only when supplied explicitly in the research request with a source URL and excerpts.
+- Registry company and management fields provide search and display context; they do not create evidence, citations, or evidence-confidence gains by themselves.
+- Synthetic evidence lives under `tests/` and is never imported by the application or server runtime.

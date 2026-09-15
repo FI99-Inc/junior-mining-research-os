@@ -8,6 +8,14 @@ import type { SourceDocument, SourceType } from "../src/domain/types";
 
 const allowedSourceTypes: SourceType[] = ["filing", "presentation", "news", "market_data", "regulatory_search", "manual"];
 
+function isHttpUrl(value: string) {
+  try {
+    return ["http:", "https:"].includes(new URL(value).protocol);
+  } catch {
+    return false;
+  }
+}
+
 const handleJsonError: ErrorRequestHandler = (error, _req, res, next) => {
   if (error?.type === "entity.too.large" && error?.status === 413) {
     res.status(413).json({ error: "JSON request body exceeds the 100kb limit." });
@@ -32,7 +40,7 @@ function normalizeManualSources(value: unknown): SourceDocument[] {
       const raw = item as Record<string, unknown>;
       const title = String(raw.title ?? "").trim();
       const publisher = String(raw.publisher ?? "Issuer document import").trim() || "Issuer document import";
-      const url = String(raw.url ?? "").trim() || "Manual source";
+      const url = String(raw.url ?? "").trim();
       const sourceType = allowedSourceTypes.includes(raw.sourceType as SourceType) ? (raw.sourceType as SourceType) : "manual";
       const excerpts = Array.isArray(raw.excerpts)
         ? raw.excerpts.map((excerpt) => String(excerpt).trim()).filter(Boolean)
@@ -41,7 +49,7 @@ function normalizeManualSources(value: unknown): SourceDocument[] {
             .map((excerpt) => excerpt.trim())
             .filter(Boolean);
 
-      if (!title || excerpts.length === 0) return undefined;
+      if (!title || !isHttpUrl(url) || excerpts.length === 0) return undefined;
       return {
         id: `manual-${Date.now()}-${index}`,
         title,

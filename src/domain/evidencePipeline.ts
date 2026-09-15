@@ -7,9 +7,9 @@ import type {
   EvidenceFactCategory,
   SourceDocument
 } from "./types";
-import { collectSources } from "./sourceAdapters";
 import { existsSync } from "node:fs";
 import type { Browser } from "playwright";
+import { sourceAdapterStatuses } from "./sourceAdapters";
 
 const retrievedAt = () => new Date().toISOString();
 const SEC_TICKERS_URL = "https://www.sec.gov/files/company_tickers.json";
@@ -271,7 +271,6 @@ interface IssuerTeamPerson {
 
 const TEAM_LINK_PATTERN =
   /technical|report|presentation|investor|news|drill|resource|sedar|pdf|corporate|about|management|leadership|team|board|governance|advisor|director|executive|linkedin\.com\/in/i;
-const MANAGEMENT_LINK_PATTERN = /corporate|about|management|leadership|team|board|governance|advisor|director|executive/i;
 const NEWS_LINK_PATTERN =
   /news|press|release|media|announces?|drill|results?|financing|private placement|resource|permit|metallurg|update|corporate update/i;
 const NEWS_ARTICLE_ACTION_PATTERN =
@@ -570,6 +569,14 @@ export function extractIssuerTeamPeople(pageHtml: string, sourceUrl: string, sec
   }).slice(0, 24);
 }
 
+function excerptsFromRetrievedDocument(rawDocument: string) {
+  const text = stripTags(rawDocument).replace(/\s+/g, " ").trim();
+  if (text.length < 20) return [];
+  const sentences = text.split(/(?<=[.!?])\s+/).map((sentence) => sentence.trim()).filter(Boolean);
+  const relevant = sentences.filter((sentence) => FACT_PATTERNS.some((factPattern) => factPattern.pattern.test(sentence)));
+  return (relevant.length ? relevant : sentences).slice(0, 6).map((sentence) => sentence.slice(0, 900));
+}
+
 async function collectSecEvidence(company: CompanyCandidate, fetcher: Fetcher, now: string): Promise<AdapterEvidenceResult> {
   const sources: SourceDocument[] = [];
   const adapters: AdapterStatus[] = [];
@@ -594,35 +601,37 @@ async function collectSecEvidence(company: CompanyCandidate, fetcher: Fetcher, n
     const documents = recent?.primaryDocument ?? [];
     const filingDates = recent?.filingDate ?? [];
 
-    forms.slice(0, 8).forEach((form, index) => {
+    for (const [index, form] of forms.slice(0, 8).entries()) {
       const accession = accessions[index];
       const document = documents[index];
-      if (!accession || !document) return;
+      if (!accession || !document) continue;
       const accessionPath = accession.replace(/-/g, "");
       const url = `https://www.sec.gov/Archives/edgar/data/${Number(match.cik_str)}/${accessionPath}/${document}`;
-      const source: SourceDocument = {
+      let excerpts: string[] = [];
+      try {
+        const documentResponse = await fetcher(url);
+        if (documentResponse.ok) excerpts = excerptsFromRetrievedDocument(await safeText(documentResponse));
+      } catch {
+        excerpts = [];
+      }
+      if (!excerpts.length) continue;
+      sources.push({
         id: `sec-${company.id}-${slug(form)}-${index}`,
         title: `${form} filing${filingDates[index] ? ` filed ${filingDates[index]}` : ""}`,
         sourceType: "filing",
         publisher: form === "4" || form === "3" || form === "5" ? "SEC EDGAR Insider Ownership" : "SEC EDGAR",
         url,
         retrievedAt: now,
-        excerpts: [
-          `${form} filing discovered through SEC EDGAR for ${company.name}.`,
-          form === "4" || form === "3" || form === "5"
-            ? "SEC Forms 3, 4, and 5 provide insider ownership and transaction evidence when available."
-            : "SEC annual, quarterly, and current filings can support cash, share structure, risk, and technical disclosure review."
-        ]
-      };
-      sources.push(source);
-    });
+        excerpts
+      });
+    }
     adapters.push({
       id: "sec-edgar-live",
       name: "SEC EDGAR automated discovery",
       status: "configured",
-      note: "Resolved CIK and discovered recent SEC filings through official SEC endpoints.",
-      contributes: ["CIK resolution", "recent filing URLs", "insider ownership forms when present"],
-      missing: ["full filing text extraction", "S-K 1300 table parsing"]
+      note: `Resolved CIK and retrieved ${sources.length} recent SEC filing document${sources.length === 1 ? "" : "s"} through official SEC endpoints.`,
+      contributes: ["CIK resolution", "retrieved filing documents", "insider filing documents when available"],
+      missing: sources.length ? ["structured filing table extraction", "S-K 1300 table parsing"] : ["retrievable filing document bodies"]
     });
   } catch {
     adapters.push({
@@ -637,34 +646,21 @@ async function collectSecEvidence(company: CompanyCandidate, fetcher: Fetcher, n
   return { sources, adapters };
 }
 
-async function collectSedarEvidence(company: CompanyCandidate, fetcher: Fetcher, now: string): Promise<AdapterEvidenceResult> {
+async function collectSedarEvidence(company: CompanyCandidate, fetcher: Fetcher): Promise<AdapterEvidenceResult> {
   if (company.country !== "CA") return { sources: [] as SourceDocument[], adapters: [] as AdapterStatus[] };
   try {
     const response = await fetcher(SEDAR_SEARCH_URL);
     if (!response.ok) throw new Error("SEDAR+ unavailable");
     return {
-      sources: [
-        {
-          id: `sedar-${company.id}-search`,
-          title: "SEDAR+ issuer disclosure search",
-          sourceType: "regulatory_search",
-          publisher: "SEDAR+",
-          url: SEDAR_SEARCH_URL,
-          retrievedAt: now,
-          excerpts: [
-            `SEDAR+ is the official Canadian disclosure discovery path for ${company.name}.`,
-            "Search technical reports, annual filings, MD&A, financial statements, circulars, prospectuses, and material change reports."
-          ]
-        }
-      ],
+      sources: [],
       adapters: [
         {
           id: "sedar-plus-live",
           name: "SEDAR+ automated discovery",
           status: "configured" as const,
-          note: "Recorded SEDAR+ public disclosure availability for this Canadian issuer.",
-          contributes: ["Canadian disclosure discovery", "regulatory-search provenance"],
-          missing: ["document-level SEDAR+ download", "NI 43-101 PDF parsing"]
+          note: "SEDAR+ was reachable, but no issuer document was retrieved during this run, so no SEDAR+ evidence was added.",
+          contributes: ["Canadian disclosure portal availability"],
+          missing: ["issuer-specific document discovery", "document-level SEDAR+ download", "NI 43-101 PDF parsing"]
         }
       ]
     };
@@ -730,28 +726,7 @@ async function collectCompanyWebsiteEvidence(
     const homeTeamType = teamSectionType(company.websiteUrl, "Company homepage leadership scan");
     const homepageTeamLink = homeTeamType ? [{ href: company.websiteUrl, title: "Company homepage leadership scan" }] : [];
     const links = dedupeLinks([...homepageTeamLink, ...discoveredLinks, ...likelyCompanyTeamLinks(company.websiteUrl)]).slice(0, 20);
-    const sources: SourceDocument[] = links.map((link, index) => {
-      const sourceType: SourceDocument["sourceType"] = /news|drill/i.test(link.title + link.href)
-        ? "news"
-        : /presentation/i.test(link.title + link.href)
-          ? "presentation"
-          : "manual";
-      const managementHint = MANAGEMENT_LINK_PATTERN.test(link.title + link.href);
-      return {
-        id: `website-${company.id}-${index}-${slug(link.title)}`,
-        title: link.title,
-        sourceType,
-        publisher: "Company website",
-        url: link.href,
-        retrievedAt: now,
-        excerpts: [
-          `${link.title} was discovered on ${company.name}'s company website.`,
-          managementHint
-            ? `${link.title} may contain management biography, director, executive, advisor, technical team, or governance evidence.`
-            : `${link.title} may contain technical report, presentation, news, resource, drill result, permitting, or capital-structure evidence.`
-        ]
-      };
-    });
+    const sources: SourceDocument[] = [];
     const teamLinks: Array<{ href: string; title: string; sectionType: IssuerTeamGroup }> = links
       .map((link) => ({ ...link, sectionType: teamSectionType(link.href, link.title) }))
       .filter((link): link is { href: string; title: string; sectionType: IssuerTeamGroup } => Boolean(link.sectionType))
@@ -794,13 +769,9 @@ async function collectCompanyWebsiteEvidence(
         publisher: "Issuer team page",
         url: result.link.href,
         retrievedAt: now,
-        excerpts: [
-          `Issuer website management biography: ${person.name} is listed as ${person.role}.`,
-          `Issuer team group: ${person.group}.`,
-          `Issuer website collection mode: ${result.mode === "playwright" ? "Playwright-rendered page" : "plain fetch page"}.`,
-          person.imageUrl ? `Issuer profile image: ${person.imageUrl}.` : "Issuer profile image: unavailable.",
-          person.bio
-        ]
+        excerpts: [`${person.name} ${person.role}`, person.bio],
+        imageUrl: person.imageUrl,
+        managementGroup: person.group
       }))
     ).filter((source, index, allSources) => allSources.findIndex((candidate) => candidate.title.toLowerCase() === source.title.toLowerCase()) === index);
     sources.push(...issuerTeamSources);
@@ -851,35 +822,22 @@ async function collectCompanyWebsiteEvidence(
   }
 }
 
-async function collectManagementDiscoveryEvidence(company: CompanyCandidate, now: string): Promise<AdapterEvidenceResult> {
+async function collectManagementDiscoveryEvidence(company: CompanyCandidate): Promise<AdapterEvidenceResult> {
   const people = company.management ?? [];
-  const sources: SourceDocument[] = people.map((person, index) => ({
-    id: `management-${company.id}-${index}-${slug(person.name)}`,
-    title: `${person.name} - ${person.role}`,
-    sourceType: "manual",
-    publisher: person.sourceUrl ? "Issuer management profile" : "Management registry",
-    url: person.sourceUrl ?? company.websiteUrl ?? (company.country === "US" ? "https://www.sec.gov/search-filings" : "https://www.sedarplus.ca/"),
-    retrievedAt: now,
-    excerpts: [
-      `Management biography: ${person.name} is listed as ${person.role} for ${company.name}.`,
-      person.bio,
-      ...person.experience.slice(0, 3).map((item) => `Track record evidence: ${item}`)
-    ]
-  }));
 
   return {
-    sources,
+    sources: [],
     adapters: [
       {
         id: "management-roster",
-        name: "Management roster enrichment",
-        status: people.length ? "configured" : "manual",
+        name: "Management roster context",
+        status: "manual",
         note: people.length
-          ? `Added ${people.length} structured management profile${people.length === 1 ? "" : "s"} from the issuer registry and profile links.`
+          ? `${people.length} registry profile${people.length === 1 ? "" : "s"} remain available as matching context only; they do not create evidence or affect evidence confidence.`
           : "No structured management roster is available yet for this company.",
-        contributes: ["verified roster seed", "management biographies", "track-record diligence prompts"],
+        contributes: ["matching context for retrieved issuer pages", "management diligence prompts"],
         missing: people.length
-          ? ["full board and project-team extraction", "appointment-date extraction"]
+          ? ["document-backed roster verification", "full board and project-team extraction", "appointment-date extraction"]
           : ["executive roster", "board roster", "technical and project-lead roster"]
       },
       {
@@ -967,10 +925,10 @@ async function collectIssuerNewsEvidence(
   let usedFetchFallback = false;
 
   try {
-    const seedPages = dedupeLinks([{ title: "Company homepage", href: company.websiteUrl }, ...likelyCompanyNewsLinks(company.websiteUrl)]).slice(0, 8);
+    const discoveryPages = dedupeLinks([{ title: "Company homepage", href: company.websiteUrl }, ...likelyCompanyNewsLinks(company.websiteUrl)]).slice(0, 8);
     const articleCandidates: Array<{ href: string; title: string }> = [];
 
-    for (const pageLink of seedPages) {
+    for (const pageLink of discoveryPages) {
       let page: BrowserPageResult | undefined;
       if (browserFetcher) {
         const rendered = await browserFetcher(pageLink.href, { timeoutMs: 8000 });
@@ -1059,10 +1017,7 @@ async function collectIssuerNewsEvidence(
         publisher: "Issuer website news",
         url: page.finalUrl || link.href,
         retrievedAt: now,
-        excerpts: [
-          excerpt,
-          `Issuer website news collection mode: ${page.mode === "playwright" ? "Playwright-rendered page" : "plain fetch page"}.`
-        ]
+        excerpts: [excerpt]
       });
     }
 
@@ -1080,7 +1035,7 @@ async function collectIssuerNewsEvidence(
           id: "issuer-news-browser",
           name: "Issuer website news browser crawler",
           status: "configured",
-          note: `${modeLabel}. Checked ${seedPages.length} issuer news/home page${seedPages.length === 1 ? "" : "s"} and collected ${sources.length} article source${sources.length === 1 ? "" : "s"}.`,
+          note: `${modeLabel}. Checked ${discoveryPages.length} issuer news/home page${discoveryPages.length === 1 ? "" : "s"} and collected ${sources.length} article source${sources.length === 1 ? "" : "s"}.`,
           contributes: ["issuer news releases", "media posts", "drill result updates", "financing and project news"],
           missing: sources.length
             ? browserFailures
@@ -1226,23 +1181,22 @@ export async function collectEvidence(company: CompanyCandidate, options: Eviden
   const browserFetcher = rawBrowserFetcher ? cachedBrowserFetcher(rawBrowserFetcher) : undefined;
   try {
     const now = options.now?.() ?? retrievedAt();
-    const seeded = collectSources(company);
     // Let every adapter settle before closing the browser shared by this run.
     const results = await Promise.allSettled([
       collectSecEvidence(company, fetcher, now),
-      collectSedarEvidence(company, fetcher, now),
+      collectSedarEvidence(company, fetcher),
       collectCompanyWebsiteEvidence(company, fetcher, now, browserFetcher),
       collectIssuerNewsEvidence(company, fetcher, now, browserFetcher),
       collectNewswireEvidence(company, fetcher, now),
-      collectManagementDiscoveryEvidence(company, now)
+      collectManagementDiscoveryEvidence(company)
     ]);
     const collected = results.map((result) => {
       if (result.status === "rejected") throw result.reason;
       return result.value;
     });
-    const sources = dedupeSources([...seeded.sources, ...collected.flatMap((result) => result.sources)]);
+    const sources = dedupeSources(collected.flatMap((result) => result.sources));
     const facts = extractEvidenceFacts(sources, now).filter((fact) => fact.sourceUrl && fact.excerpt);
-    const adapters = [...seeded.adapters, ...collected.flatMap((result) => result.adapters)];
+    const adapters = [...sourceAdapterStatuses(company), ...collected.flatMap((result) => result.adapters)];
     const status = buildStatus(facts, adapters, now);
     return { sources, facts, status, gaps: status.gaps };
   } finally {

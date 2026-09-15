@@ -741,7 +741,7 @@ describe("collectEvidence", () => {
     expect(result.sources.filter((source) => source.publisher === "Issuer website news")).toEqual([]);
   });
 
-  it("collects cited SEC, company-site, newswire, and insider evidence for a U.S. issuer", async () => {
+  it("collects retrieved SEC, issuer-team, newswire, and insider evidence for a U.S. issuer", async () => {
     const company = resolveCompany("USGO");
     if (!company) throw new Error("Missing test company");
 
@@ -761,6 +761,17 @@ describe("collectEvidence", () => {
             }
           }
         });
+      }
+      if (url.endsWith("/usgo-10k.htm")) {
+        return html(`
+          <main>
+            <p>The filing includes an S-K 1300 technical report summary, mineral resource estimate, metallurgy, infrastructure, and permitting disclosure.</p>
+            <p>The filing reports the cash balance, working capital, shares outstanding, and financing requirements.</p>
+          </main>
+        `);
+      }
+      if (url.endsWith("/usgo-form4.xml")) {
+        return html("<ownershipDocument><remarks>Insider ownership and reportable transactions are disclosed for the reporting owner.</remarks></ownershipDocument>");
       }
       if (url === company.websiteUrl) {
         return html(`
@@ -798,10 +809,7 @@ describe("collectEvidence", () => {
     expect(result.sources).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ publisher: "SEC EDGAR", sourceType: "filing" }),
-        expect.objectContaining({ publisher: "Company website", title: expect.stringContaining("technical report") }),
-        expect.objectContaining({ publisher: "Company website", title: expect.stringContaining("Management") }),
         expect.objectContaining({ publisher: "Issuer team page", title: expect.stringContaining("Jane Doe") }),
-        expect.objectContaining({ publisher: "Issuer management profile", title: expect.stringContaining("Tim Smith") }),
         expect.objectContaining({ publisher: "GlobeNewswire", sourceType: "news" }),
         expect.objectContaining({ publisher: "SEC EDGAR Insider Ownership", sourceType: "filing" })
       ])
@@ -819,7 +827,7 @@ describe("collectEvidence", () => {
     expect(result.status.categories.find((item) => item.id === "technical_report")?.status).toBe("found");
     expect(result.status.categories.find((item) => item.id === "insider_ownership")?.status).toBe("found");
     expect(result.status.adapters.find((adapter) => adapter.id === "sec-edgar-live")?.status).toBe("configured");
-    expect(result.status.adapters.find((adapter) => adapter.id === "management-roster")?.status).toBe("configured");
+    expect(result.status.adapters.find((adapter) => adapter.id === "management-roster")?.status).toBe("manual");
     expect(result.status.adapters.find((adapter) => adapter.id === "company-website")?.note).toMatch(/issuer team profile/i);
     expect(result.status.adapters.find((adapter) => adapter.id === "linkedin-candidate-discovery")?.note).toMatch(/three-tier status/i);
     expect(result.status.adapters.find((adapter) => adapter.id === "composio-management-search")?.status).toBe("needs_key");

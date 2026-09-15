@@ -4,24 +4,25 @@ import { describe, expect, it, vi } from "vitest";
 import App from "../src/App";
 import { createResearchRun } from "../src/domain/researchEngine";
 import { resolveCompany } from "../src/domain/companyResolver";
-import { collectSources } from "../src/domain/sourceAdapters";
+import { sourceAdapterStatuses } from "../src/domain/sourceAdapters";
+import { syntheticResearchSources } from "./fixtures/syntheticEvidence";
 
 describe("App", () => {
   it("generates a single-stock research memo with scorecard, lenses, sources, and history", async () => {
     const company = resolveCompany("USGO");
     if (!company) throw new Error("Missing test company");
-    const collected = collectSources(company);
+    const sources = syntheticResearchSources();
     const run = {
-      ...createResearchRun(company, collected.sources, "USGO"),
+      ...createResearchRun(company, sources, "USGO"),
       evidenceFacts: [
         {
           id: "fact-test-technical-report",
           category: "technical_report",
           label: "Technical report / project disclosure",
           value: "Technical report evidence was discovered automatically.",
-          sourceId: collected.sources[0].id,
-          sourceUrl: collected.sources[0].url,
-          sourceTitle: collected.sources[0].title,
+          sourceId: sources[0].id,
+          sourceUrl: sources[0].url,
+          sourceTitle: sources[0].title,
           excerpt: "Technical report evidence was discovered automatically.",
           confidence: "medium",
           retrievedAt: "2026-07-03T12:00:00.000Z"
@@ -54,7 +55,7 @@ describe("App", () => {
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
         if (url.endsWith("/api/research-runs") && init?.method === "POST") {
-          return Response.json({ ...run, adapters: collected.adapters });
+          return Response.json({ ...run, adapters: sourceAdapterStatuses(company) });
         }
         if (url.endsWith("/api/research-runs")) {
           return Response.json([run]);
@@ -230,11 +231,11 @@ describe("App", () => {
   it("sends imported issuer evidence with a research request", async () => {
     const company = resolveCompany("USGO");
     if (!company) throw new Error("Missing test company");
-    const collected = collectSources(company);
+    const sources = syntheticResearchSources();
     const run = createResearchRun(
       company,
       [
-        ...collected.sources,
+        ...sources,
         {
           id: "manual-usgo-technical-report",
           title: "Whistler Technical Report",
@@ -252,7 +253,7 @@ describe("App", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith("/api/research-runs") && init?.method === "POST") {
-        return Response.json({ ...run, adapters: collected.adapters });
+        return Response.json({ ...run, adapters: sourceAdapterStatuses(company) });
       }
       if (url.endsWith("/api/research-runs")) {
         return Response.json([]);

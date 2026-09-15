@@ -1239,11 +1239,13 @@ function managementGroup(role: string): NonNullable<ManagementPerson["group"]> {
   return "project_lead";
 }
 
-function managementSourceStatus(person: ManagementPerson): NonNullable<ManagementPerson["sourceStatus"]> {
-  if (!person.sourceUrl) return "unknown";
-  if (/sec\.gov|sedarplus|sedi\.ca/i.test(person.sourceUrl)) return "filing";
-  if (/linkedin\.com/i.test(person.sourceUrl)) return "candidate";
-  return "issuer";
+function managementSourceStatusFromEvidence(
+  sources: ManagementEvidence["sources"]
+): NonNullable<ManagementPerson["sourceStatus"]> {
+  if (sources.some((source) => source.sourceType === "filing" || /sec\.gov|sedarplus|sedi\.ca/i.test(source.url))) return "filing";
+  if (sources.some((source) => /company website|issuer/i.test(source.publisher))) return "issuer";
+  if (sources.some((source) => /linkedin\.com/i.test(source.url))) return "candidate";
+  return "unknown";
 }
 
 function linkedInUrlFromSources(person: ManagementPerson, sources: ManagementEvidence["sources"]) {
@@ -1259,14 +1261,14 @@ function linkedInStatusFromSources(
   linkedInUrl: string | undefined,
   sources: ManagementEvidence["sources"]
 ): NonNullable<ManagementPerson["linkedInStatus"]> {
-  if (person.linkedInStatus) return person.linkedInStatus;
   if (!linkedInUrl) return "needs_review";
   const name = person.name.toLowerCase();
-  const issuerLinkedInSource = sources.some((source) => {
+  const matchingLinkedInSource = sources.find((source) => {
     const haystack = `${source.personName ?? ""} ${source.title} ${source.publisher} ${source.excerpt}`.toLowerCase();
-    return source.url === linkedInUrl && /company website|issuer/i.test(source.publisher) && haystack.includes(name);
+    return source.url === linkedInUrl && haystack.includes(name);
   });
-  return issuerLinkedInSource ? "verified" : "likely_match";
+  if (!matchingLinkedInSource) return "needs_review";
+  return /company website|issuer|filing/i.test(matchingLinkedInSource.publisher) ? "verified" : "likely_match";
 }
 
 function collectLinkedInCandidates(
@@ -1383,48 +1385,24 @@ function normalizedPersonName(value: string) {
   return value.toLowerCase().replace(/[^a-z\s'-]/g, " ").replace(/\s+/g, " ").trim();
 }
 
-function issuerGroupFromExcerpts(excerpts: string[]): ManagementPerson["group"] {
-  const groupLine = excerpts.find((excerpt) => excerpt.startsWith("Issuer team group:"));
-  const group = groupLine?.replace(/^Issuer team group:\s*/i, "").replace(/\.$/, "").trim();
-  return group === "executive" || group === "board" || group === "technical" || group === "advisor" || group === "project_lead"
-    ? group
-    : undefined;
-}
-
-function issuerImageFromExcerpts(excerpts: string[]) {
-  const imageLine = excerpts.find((excerpt) => excerpt.startsWith("Issuer profile image:"));
-  const value = imageLine?.replace(/^Issuer profile image:\s*/i, "").replace(/\.$/, "").trim();
-  return value && value !== "unavailable" ? value : undefined;
-}
-
-function issuerBioFromExcerpts(excerpts: string[]) {
-  return excerpts
-    .filter((excerpt) => !/^Issuer website management biography:|^Issuer team group:|^Issuer profile image:/i.test(excerpt))
-    .join(" ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
 function issuerPeopleFromSources(sources: SourceDocument[]): ManagementPerson[] {
   return sources
     .filter((source) => source.publisher === "Issuer team page")
     .map((source): ManagementPerson | undefined => {
       const titleMatch = source.title.match(/^(.+?)\s+-\s+(.+)$/);
-      const bioLine = source.excerpts.find((excerpt) => excerpt.startsWith("Issuer website management biography:"));
-      const bioMatch = bioLine?.match(/Issuer website management biography:\s*(.+?)\s+is listed as\s+(.+?)\.$/i);
-      const name = titleMatch?.[1] ?? bioMatch?.[1];
-      const role = titleMatch?.[2] ?? bioMatch?.[2];
-      const bio = issuerBioFromExcerpts(source.excerpts);
+      const name = titleMatch?.[1];
+      const role = titleMatch?.[2];
+      const bio = source.excerpts.slice(1).join(" ").replace(/\s+/g, " ").trim() || source.excerpts[0]?.trim();
       if (!name || !role || !bio) return undefined;
       return {
         name,
         role,
         bio,
         experience: [bio],
-        group: issuerGroupFromExcerpts(source.excerpts) ?? managementGroup(role),
+        group: source.managementGroup ?? managementGroup(role),
         sourceUrl: source.url,
         sourceStatus: "issuer",
-        profileImageUrl: issuerImageFromExcerpts(source.excerpts),
+        profileImageUrl: source.imageUrl,
         trackRecord: /discover|mine|build|financ|capital|transaction|acquisition|acquired|deposit|development|operation|project/i.test(bio)
           ? [bio]
           : [],
@@ -1467,8 +1445,13 @@ function buildManagementEvidence(
   sources: SourceDocument[],
   facts: EvidenceFact[] = []
 ): ManagementEvidence {
-  const seededPeople = company.management?.length
-    ? company.management
+  const registryContext = company.management?.length
+    ? company.management.map((person) => ({
+        ...person,
+        sourceStatus: "unknown" as const,
+        evidenceIds: [] as string[],
+        trackRecord: [] as string[]
+      }))
     : [
         {
           name: "Management team",
@@ -1484,30 +1467,22 @@ function buildManagementEvidence(
       ];
   const issuerPeople = issuerPeopleFromSources(sources);
   const registryPeople =
-    issuerPeople.length && seededPeople.length === 1 && seededPeople[0].name === "Management team"
+    issuerPeople.length && registryContext.length === 1 && registryContext[0].name === "Management team"
       ? issuerPeople
-      : mergeManagementPeople(seededPeople, issuerPeople);
+      : mergeManagementPeople(registryContext, issuerPeople);
 
-  const managementSources = sources.filter((source) =>
-    /management|leadership|executive|director|board|governance|technical team|qualified person|advisor|profile/i.test(
-      `${source.title} ${source.publisher} ${source.excerpts.join(" ")}`
-    )
+  const managementSources = sources.filter(
+    (source) =>
+      source.publisher === "Issuer team page" ||
+      /management|leadership|executive|director|board|governance|technical team|qualified person|advisor|profile/i.test(
+        `${source.title} ${source.publisher} ${source.excerpts.join(" ")}`
+      )
   );
   const factSources = facts.filter((fact) =>
     ["management_biography", "prior_outcomes", "capital_allocation", "insider_ownership"].includes(fact.category)
   );
 
   const personSources: ManagementEvidence["sources"] = [
-    ...registryPeople.map((person) => ({
-      id: `management-registry-${slug(company.id)}-${slug(person.name)}`,
-      personName: person.name,
-      title: `${person.name} - ${person.role}`,
-      url: person.sourceUrl ?? company.websiteUrl ?? (company.country === "US" ? "https://www.sec.gov/search-filings" : "https://www.sedarplus.ca/"),
-      publisher: person.sourceUrl ? "Issuer or filing profile" : "Company registry",
-      sourceType: "manual" as const,
-      excerpt: `${person.name} is listed as ${person.role}. ${person.bio}`,
-      confidence: person.sourceUrl ? ("medium" as const) : ("low" as const)
-    })),
     ...managementSources.map((source) => ({
       id: source.id,
       title: source.title,
@@ -1529,7 +1504,7 @@ function buildManagementEvidence(
   ];
 
   const people = registryPeople.map((person) => {
-    const isPlaceholder = person.name === "Management team";
+    const isGenericRosterEntry = person.name === "Management team";
     const evidenceIds = personSources
       .filter((source) => {
         const name = person.name.toLowerCase();
@@ -1537,14 +1512,18 @@ function buildManagementEvidence(
         return source.title.toLowerCase().includes(name) || source.excerpt.toLowerCase().includes(name);
       })
       .map((source) => source.id);
-    const trackRecord = isPlaceholder
+    const matchingSources = personSources.filter((source) => evidenceIds.includes(source.id));
+    const trackRecord = isGenericRosterEntry || evidenceIds.length === 0
       ? []
       : person.experience.filter((item) => /discover|mine|build|financ|capital|transaction|deposit|development|operation|project/i.test(item));
-    const discoveredLinkedInUrl = person.linkedInUrl ?? linkedInUrlFromSources(person, personSources);
+    const sourcedLinkedInUrl = linkedInUrlFromSources(person, personSources);
+    const discoveredLinkedInUrl = sourcedLinkedInUrl ?? person.linkedInUrl;
     return {
       ...person,
       group: person.group ?? managementGroup(person.role),
-      sourceStatus: person.sourceStatus ?? managementSourceStatus(person),
+      sourceStatus: evidenceIds.length ? managementSourceStatusFromEvidence(matchingSources) : "unknown",
+      sourceUrl: evidenceIds.length ? person.sourceUrl : undefined,
+      profileImageUrl: evidenceIds.length ? person.profileImageUrl : undefined,
       linkedInUrl: discoveredLinkedInUrl,
       linkedInStatus: linkedInStatusFromSources(person, discoveredLinkedInUrl, personSources),
       evidenceIds,
@@ -1658,6 +1637,7 @@ function buildManagementEvidence(
 function managementEvidenceScore(evidence: ManagementEvidence) {
   const roleCoverage = managementRoleCoverage(evidence.people);
   const hasSourcedRoster = hasIssuerOrFilingRosterEvidence(evidence);
+  if (!hasSourcedRoster) return 30;
   const technicalCredibility = managementTechnicalCredibility(evidence);
   const priorOutcomes = managementPriorOutcomeStrength(evidence);
   const capitalAllocation = managementCapitalAllocationStrength(evidence);
@@ -1666,7 +1646,7 @@ function managementEvidenceScore(evidence: ManagementEvidence) {
   const technicalScore = technicalCredibility.status === "positive" ? 12 : technicalCredibility.status === "watch" ? 5 : 0;
   const linkedInScore = Math.min(
     6,
-    (hasSourcedRoster ? evidence.linkedInCandidates.filter((candidate) => candidate.status === "verified").length * 3 : 0) +
+    evidence.linkedInCandidates.filter((candidate) => candidate.status === "verified").length * 3 +
       evidence.linkedInCandidates.filter((candidate) => candidate.status === "likely_match").length
   );
   const trackRecordScore = Math.min(16, priorOutcomes.highQualityCount * 5 + Math.max(0, priorOutcomes.count - priorOutcomes.highQualityCount) * 2);
@@ -1750,7 +1730,7 @@ function fallbackShareStructure(company: CompanyCandidate, marketSnapshot: Marke
       strategicOwnership: undefined,
       floatQuality:
         marketSnapshot.status === "sourced"
-          ? "Shares outstanding can be seeded from market data, but float, insider, strategic, warrant, option, and fully diluted figures still need ownership-specific sourcing."
+          ? "Shares outstanding can be populated from market data, but float, insider, strategic, warrant, option, and fully diluted figures still need ownership-specific sourcing."
           : "Unknown until current share count, insider ownership, strategic holders, warrants, options, and recent financing terms are ingested.",
       notes: [
         "Use Yahoo Finance market data where available, then reconcile with filings before relying on ownership figures.",

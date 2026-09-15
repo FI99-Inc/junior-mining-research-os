@@ -1,13 +1,13 @@
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  collectSources,
   collectMarketData,
   collectMarketSnapshot,
   collectYahooSupplementalData,
   collectYahooMarketSnapshot,
   mapYahooSupplementalData,
   normalizeYahooSymbol,
+  sourceAdapterStatuses,
   yahooSupplementalSymbolCandidates
 } from "../src/domain/sourceAdapters";
 import type { CompanyCandidate } from "../src/domain/types";
@@ -313,12 +313,11 @@ describe("collectMarketSnapshot", () => {
   );
 
   it("advertises only Yahoo market data and no seeded provider profile", () => {
-    const result = collectSources(company);
-    expect(result.adapters.find((adapter) => adapter.id === "market-data")).toMatchObject({
+    const adapters = sourceAdapterStatuses(company);
+    expect(adapters.find((adapter) => adapter.id === "market-data")).toMatchObject({
       name: "Yahoo/YFinance market data",
       status: "configured"
     });
-    expect(result.sources.filter((source) => source.sourceType === "market_data")).toEqual([]);
   });
 });
 
