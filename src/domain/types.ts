@@ -169,9 +169,7 @@ export interface InvestorLens {
   id: string;
   name: string;
   initials: string;
-  portraitTone: string;
-  portraitUrl?: string;
-  portraitSourceUrl?: string;
+  visualTone: string;
   approach: string;
   focus: string;
   background: string;

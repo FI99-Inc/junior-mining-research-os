@@ -213,25 +213,26 @@ describe("createResearchRun", () => {
       ])
     );
     expect(run.shareStructure.floatQuality).toBeTruthy();
-    expect(run.investorLenses.map((lens) => lens.name)).toEqual(["Rick Rule", "Eric Sprott", "Marin Katusa"]);
-    expect(run.investorLenses[0].initials).toBe("RR");
-    expect(run.investorLenses[0].portraitTone).toBeTruthy();
-    expect(run.investorLenses[0].portraitUrl).toContain("rick-rule");
-    expect(run.investorLenses.find((lens) => lens.name === "Eric Sprott")?.portraitUrl).toContain("eric-sprott");
+    expect(run.investorLenses.map((lens) => lens.name)).toEqual([
+      "Contrarian and downside-survival lens",
+      "Discovery and sponsorship lens",
+      "Macro, jurisdiction, and capital-scarcity lens"
+    ]);
+    expect(run.investorLenses[0].initials).toBe("CD");
+    expect(run.investorLenses[0].visualTone).toBeTruthy();
+    expect(JSON.stringify(run.investorLenses)).not.toMatch(/Rick Rule|Eric Sprott|Marin Katusa|\/investors\//i);
     expect(run.investorLenses[0].approach).toContain("optionality");
     expect(run.investorLenses[0].metrics).toEqual(expect.arrayContaining([expect.stringContaining("Investment Quality")]));
     expect(run.investorLenses[0].background).toContain("resource");
     expect(run.investorLenses[0].checklist).toEqual(expect.arrayContaining([expect.stringContaining("management")]));
-    expect(run.investorLenses[0].sourceLinks).toEqual(
-      expect.arrayContaining([expect.objectContaining({ url: expect.stringContaining("ruleinvestmentmedia") })])
-    );
-    expect(run.investorLenses.find((lens) => lens.name === "Eric Sprott")?.checklist).toEqual(
+    expect(run.investorLenses[0].sourceLinks).toEqual([]);
+    expect(run.investorLenses.find((lens) => lens.name === "Discovery and sponsorship lens")?.checklist).toEqual(
       expect.arrayContaining([expect.stringContaining("insider")])
     );
-    expect(run.investorLenses.find((lens) => lens.name === "Marin Katusa")?.checklist).toEqual(
+    expect(run.investorLenses.find((lens) => lens.name === "Macro, jurisdiction, and capital-scarcity lens")?.checklist).toEqual(
       expect.arrayContaining([expect.stringContaining("macro")])
     );
-    expect(run.investorLenses[0].disclaimer).toContain("synthesized analytical lens");
+    expect(run.investorLenses[0].disclaimer).toContain("independent analytical framework");
     expect(run.analystForecast.status).toBe("not_sourced");
     expect(run.analystForecast.consensusLabel).toBe("Forecast unavailable in current data");
     expect(run.analystForecast.summary).not.toContain("No sourced analyst forecast");

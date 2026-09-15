@@ -8,8 +8,11 @@ import {
   PieChart,
   Newspaper,
   Play,
+  Scale,
   Search,
+  ShieldCheck,
   Sparkles,
+  Telescope,
   Users
 } from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
@@ -652,13 +655,19 @@ function ForecastChart({ forecast, marketSnapshot }: { forecast: AnalystForecast
 
 function LensCard({ lens }: { lens: InvestorLens }) {
   const [open, setOpen] = useState(false);
+  const FrameworkIcon =
+    lens.id === "contrarian-downside-survival"
+      ? ShieldCheck
+      : lens.id === "discovery-sponsorship"
+        ? Telescope
+        : Scale;
 
   return (
     <article className={`lens-card ${open ? "open" : ""}`}>
       <button type="button" className="lens-toggle" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
         <span className="lens-person">
-          <span className={`lens-avatar ${lens.portraitTone}`}>
-            {lens.portraitUrl ? <img src={lens.portraitUrl} alt={`${lens.name} portrait`} loading="lazy" /> : lens.initials}
+          <span className={`lens-icon ${lens.visualTone}`} aria-hidden>
+            <FrameworkIcon size={28} />
           </span>
           <span>
             <strong>{lens.name}</strong>
@@ -670,19 +679,19 @@ function LensCard({ lens }: { lens: InvestorLens }) {
       <p className="lens-focus">{lens.approach}</p>
       {open ? (
         <div className="lens-body">
-          <h4>Background</h4>
+          <h4>Framework rationale</h4>
           <p>{lens.background}</p>
-          <h4>How this investor would approach it</h4>
+          <h4>How to apply this framework</h4>
           <p>{lens.view}</p>
           <div className="two-column compact">
             <div>
-              <h4>What they would like</h4>
+              <h4>What supports the case</h4>
               {lens.positives.map((item) => (
                 <p key={item}>{item}</p>
               ))}
             </div>
             <div>
-              <h4>What they would challenge</h4>
+              <h4>What the framework challenges</h4>
               {lens.concerns.map((item) => (
                 <p key={item}>{item}</p>
               ))}
@@ -700,18 +709,15 @@ function LensCard({ lens }: { lens: InvestorLens }) {
               <li key={item}>{item}</li>
             ))}
           </ul>
-          <div className="lens-source-links">
-            {lens.sourceLinks.map((source) => (
-              <a href={source.url} target="_blank" rel="noreferrer" key={source.url}>
-                {source.label} <ExternalLink size={14} aria-hidden />
-              </a>
-            ))}
-            {lens.portraitSourceUrl ? (
-              <a href={lens.portraitSourceUrl} target="_blank" rel="noreferrer">
-                Portrait source <ExternalLink size={14} aria-hidden />
-              </a>
-            ) : null}
-          </div>
+          {lens.sourceLinks.length ? (
+            <div className="lens-source-links">
+              {lens.sourceLinks.map((source) => (
+                <a href={source.url} target="_blank" rel="noreferrer" key={source.url}>
+                  {source.label} <ExternalLink size={14} aria-hidden />
+                </a>
+              ))}
+            </div>
+          ) : null}
           <small>{lens.disclaimer}</small>
         </div>
       ) : null}
@@ -1163,7 +1169,7 @@ function SummaryCards({ run }: { run: ResearchRunResponse }) {
       <div className="summary-card">
         <span>Perspectives</span>
         <strong>{run.investorLenses.length}</strong>
-        <small>named investor frameworks</small>
+        <small>independent analytical frameworks</small>
       </div>
       <div className="summary-card">
         <span>Red flags</span>
@@ -1360,7 +1366,7 @@ export default function App() {
               </p>
               <div className="hero-metrics">
                 <span>Canada/US universe</span>
-                <span>3 investor frameworks</span>
+                <span>3 analytical frameworks</span>
                 <span>citation-first analysis</span>
               </div>
             </div>
@@ -1504,17 +1510,17 @@ export default function App() {
 
               {activeTab === "lenses" ? (
                 <>
-                  <section className="panel lens-section" aria-label="Analyst and investor viewpoints">
+                  <section className="panel lens-section" aria-label="Analytical frameworks">
                     <div className="section-head">
                       <div>
-                        <p className="eyebrow">Analyst and investor viewpoints</p>
+                        <p className="eyebrow">Independent analytical frameworks</p>
                         <h2>
                           <Brain size={18} aria-hidden /> Market Perspectives
                         </h2>
                       </div>
                       <p>
-                        Compare synthesized investor-style frameworks. Named investor cards are analytical lenses, not
-                        claims of current ownership or endorsement.
+                        Compare three independent research frameworks for downside survival, discovery sponsorship, and
+                        macro, jurisdiction, and capital-scarcity risk. They do not imply affiliation or endorsement.
                       </p>
                     </div>
                     <div className="lens-list">
@@ -1593,15 +1599,11 @@ export default function App() {
                                       <h3>{person.name}</h3>
                                     </div>
                                     <div className="management-initials" aria-hidden>
-                                      {person.profileImageUrl ? (
-                                        <img src={person.profileImageUrl} alt="" loading="lazy" />
-                                      ) : (
-                                        person.name
-                                          .split(" ")
-                                          .map((part) => part[0])
-                                          .join("")
-                                          .slice(0, 2)
-                                      )}
+                                      {person.name
+                                        .split(" ")
+                                        .map((part) => part[0])
+                                        .join("")
+                                        .slice(0, 2)}
                                     </div>
                                   </div>
                                   <div className="management-badges">

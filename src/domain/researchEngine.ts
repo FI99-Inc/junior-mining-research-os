@@ -1099,25 +1099,23 @@ function buildInvestorLenses(company: CompanyCandidate, sources: SourceDocument[
   const citations = sourceIds(sources);
   const noEvidence = sources.length === 0;
   const disclaimer =
-    "This is a synthesized analytical lens based on publicly discussed investing principles; it is not a statement of any investor's current opinion.";
+    "This independent analytical framework does not represent any person or organization and does not imply affiliation, endorsement, or investment advice.";
 
   const view = (focus: string) =>
     noEvidence
-      ? "Current sources are insufficient for a supported view. Treat this lens as a checklist of what to verify next."
-      : `${company.name} should be judged through ${focus}, with every positive claim tied back to the cited source set.`;
+      ? "Current sources are insufficient for a supported view. Use this framework as a checklist of what to verify next."
+      : `Apply ${focus} to ${company.name}, with every positive claim tied back to the cited source set.`;
 
   return [
     {
-      id: "rick-rule",
-      name: "Rick Rule",
-      initials: "RR",
-      portraitTone: "gold",
-      portraitUrl: "/investors/rick-rule.jpg",
-      portraitSourceUrl: "https://ruleinvestmentmedia.com/",
+      id: "contrarian-downside-survival",
+      name: "Contrarian and downside-survival lens",
+      initials: "CD",
+      visualTone: "gold",
       approach: "Contrarian resource optionality, management credibility, jurisdiction, and survival through weak markets.",
       focus: "contrarian resource optionality, jurisdiction, management credibility, and financing survival",
       background:
-        "Rick Rule is a long-time natural-resource investor and speculator associated with resource-cycle investing, private placements, management due diligence, and downside-first thinking.",
+        "This resource-cycle investing framework starts with downside survival, management credibility, financing resilience, and whether the asset offers meaningful optionality.",
       view: view("resource optionality and downside survival"),
       positives: noEvidence ? ["Potential upside cannot be assessed without project evidence."] : ["Exploration optionality is present if the cited project scale is credible."],
       concerns: ["Avoid promotion-driven narratives without evidence for scale, cost of capital, and management execution."],
@@ -1128,24 +1126,19 @@ function buildInvestorLenses(company: CompanyCandidate, sources: SourceDocument[
         "Can the company survive weak markets without destructive dilution?",
         "Are jurisdiction, title, permitting, and technical claims independently verifiable?"
       ],
-      sourceLinks: [
-        { label: "Rule Investment Media", url: "https://ruleinvestmentmedia.com/" },
-        { label: "Rule Symposium", url: "https://rulesymposium.com/" }
-      ],
+      sourceLinks: [],
       citationIds: citations,
       disclaimer
     },
     {
-      id: "eric-sprott",
-      name: "Eric Sprott",
-      initials: "ES",
-      portraitTone: "silver",
-      portraitUrl: "/investors/eric-sprott.jpg",
-      portraitSourceUrl: "https://sprott.carleton.ca/eric-sprott/",
+      id: "discovery-sponsorship",
+      name: "Discovery and sponsorship lens",
+      initials: "DS",
+      visualTone: "silver",
       approach: "Discovery upside, strong sponsorship, insider alignment, and whether financing can accelerate exploration.",
       focus: "high-upside discovery potential, insider alignment, large backers, and whether financing can accelerate exploration",
       background:
-        "Eric Sprott is a Canadian resource investor known for precious-metals conviction, backing exploration companies, and emphasizing discovery upside and insider alignment.",
+        "This framework tests whether credible sponsorship, aligned ownership, and adequately funded exploration can convert geological potential into repeatable discovery evidence.",
       view: view("sponsorship quality, discovery upside, and whether capital backing improves the odds of a real discovery"),
       positives: ["Strategic sponsorship matters when it funds drilling, signals conviction, and reduces near-term financing stress."],
       concerns: ["Prominent backers do not replace deposit evidence, technical validation, or disciplined entry price."],
@@ -1156,24 +1149,19 @@ function buildInvestorLenses(company: CompanyCandidate, sources: SourceDocument[
         "Are drill results showing grade continuity, scale, and repeatability?",
         "Can the company keep exploration momentum without giving away too much dilution?"
       ],
-      sourceLinks: [
-        { label: "Sprott Inc.", url: "https://sprott.com/" },
-        { label: "Sprott Money", url: "https://www.sprottmoney.com/" }
-      ],
+      sourceLinks: [],
       citationIds: citations,
       disclaimer
     },
     {
-      id: "marin-katusa",
-      name: "Marin Katusa",
-      initials: "MK",
-      portraitTone: "copper",
-      portraitUrl: "/investors/marin-katusa.jpg",
-      portraitSourceUrl: "https://www.goodreads.com/author/show/7183630.Marin_Katusa",
+      id: "macro-jurisdiction-capital-scarcity",
+      name: "Macro, jurisdiction, and capital-scarcity lens",
+      initials: "MC",
+      visualTone: "copper",
       approach: "Macro cycle, capital scarcity, jurisdiction, incentives, and asymmetric upside in scarce resource themes.",
       focus: "commodity cycle, jurisdiction, capital scarcity, management incentives, and asymmetry versus macro demand",
       background:
-        "Marin Katusa is a resource-sector author and investor associated with macro-aware commodity themes, jurisdictional risk, capital scarcity, and incentive-focused due diligence.",
+        "This framework connects commodity-cycle conditions with jurisdiction, infrastructure, incentives, capital availability, and the dilution required to reach the next value milestone.",
       view: view("macro tailwinds, jurisdictional risk, and whether the story has asymmetric upside if the commodity cycle strengthens"),
       positives: [`${company.commodityFocus.join(", ")} exposure can matter more if macro demand and capital flows turn supportive.`],
       concerns: ["Macro themes should not overpower company-specific financing, permitting, and asset-quality risk."],
@@ -1184,10 +1172,7 @@ function buildInvestorLenses(company: CompanyCandidate, sources: SourceDocument[
         "Are management incentives aligned with common shareholders?",
         "Is the upside asymmetric after considering capital needs and dilution?"
       ],
-      sourceLinks: [
-        { label: "Katusa Research", url: "https://katusaresearch.com/" },
-        { label: "Katusa's resource investing book", url: "https://katusaresearch.com/the-colder-war/" }
-      ],
+      sourceLinks: [],
       citationIds: citations,
       disclaimer
     }

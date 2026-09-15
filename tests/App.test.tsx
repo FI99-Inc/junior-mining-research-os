@@ -121,6 +121,8 @@ describe("App", () => {
     expect(screen.getByTestId("sticky-search")).toHaveClass("compact-search");
     expect(screen.getByTestId("hero-search")).toBeInTheDocument();
     expect(screen.getByText(/Explore companies/i)).toBeInTheDocument();
+    expect(screen.getByText("3 analytical frameworks")).toBeInTheDocument();
+    expect(screen.queryByText("3 investor frameworks")).not.toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: /research/i }).length).toBeGreaterThanOrEqual(10);
 
     const tickerInputs = screen.getAllByLabelText(/ticker or company/i);
@@ -178,25 +180,23 @@ describe("App", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /market perspectives/i }));
     expect(screen.queryByText(/^Score$/i)).not.toBeInTheDocument();
-    const investorRegion = screen.getByRole("region", { name: /Analyst and investor viewpoints/i });
+    const investorRegion = screen.getByRole("region", { name: /Analytical frameworks/i });
     const brokerRegion = screen.getByRole("region", { name: /Broker and market coverage/i });
     expect(investorRegion).not.toHaveTextContent(/Analyst Forecast/i);
     expect(brokerRegion).toHaveTextContent(/Analyst Forecast/i);
     expect(screen.getByRole("heading", { name: /Analyst Forecast/i })).toBeInTheDocument();
     expect(screen.getByText(/Analyst target data was not available/i)).toBeInTheDocument();
-    expect(screen.getByRole("img", { name: /Rick Rule portrait/i })).toBeInTheDocument();
-    expect(screen.getByRole("img", { name: /Eric Sprott portrait/i })).toBeInTheDocument();
-    expect(screen.getByRole("img", { name: /Marin Katusa portrait/i })).toBeInTheDocument();
+    expect(within(investorRegion).queryByRole("img")).not.toBeInTheDocument();
     expect(screen.getByRole("img", { name: /Analyst forecast chart/i })).toBeInTheDocument();
     expect(screen.getByText(/Awaiting target data/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Rick Rule/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Eric Sprott/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Marin Katusa/i })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: /Rick Rule/i }));
-    expect(screen.getByText(/How this investor would approach it/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Contrarian and downside-survival lens/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Discovery and sponsorship lens/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Macro, jurisdiction, and capital-scarcity lens/i })).toBeInTheDocument();
+    expect(screen.queryByText(/Rick Rule|Eric Sprott|Marin Katusa/i)).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /Contrarian and downside-survival lens/i }));
+    expect(screen.getByText(/How to apply this framework/i)).toBeInTheDocument();
     expect(screen.getByText(/resource-cycle investing/i)).toBeInTheDocument();
     expect(screen.getByText(/Framework checklist/i)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Rule Investment Media/i })).toBeInTheDocument();
     expect(screen.getByText(/Figures to watch/i)).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: /news/i }));

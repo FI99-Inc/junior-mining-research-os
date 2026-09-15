@@ -81,6 +81,8 @@ pnpm.cmd check
 
 Research runs are stored in process memory and are cleared when the API restarts. Issuer websites and public data providers can be unavailable, stale, or incomplete; the UI preserves those gaps for diligence. See [market-data.md](docs/market-data.md) and [cleanup-audit.md](docs/cleanup-audit.md) for provider and maintenance details.
 
+Visual asset provenance and third-party attributions are documented in [ASSET-LICENSES.md](ASSET-LICENSES.md). The application does not hotlink portraits or background images.
+
 ## Evidence provenance
 
 - Automated evidence is accepted only after the referenced document or page is retrieved during the current research run.

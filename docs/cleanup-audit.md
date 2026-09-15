@@ -32,7 +32,7 @@ Audit date: 2026-09-10. Scope: local repository and local application; no public
 - This is a private loopback-only app with no login, durable database, production deployment configuration, or implemented progressive job API. Preserve that boundary.
 - Source freshness, third-party availability, financial correctness, biography matching, and model calibration cannot be certified by UI/build tests. Live provider failures must remain visible as missing evidence.
 - No credentials or environment files were read. Configuration documentation will come from source variable names and runtime behavior.
-- Existing investor photos and architecture image assets are retained; no provenance/license record is present for the photos. Confirm rights before public distribution.
+- Investor and management portraits are not shipped or hotlinked. The application uses neutral framework icons, management initials, and a CSS-authored hero treatment; retained visual provenance is recorded in `ASSET-LICENSES.md`.
 
 ## Implementation and final verification
 
