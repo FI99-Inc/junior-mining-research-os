@@ -65,6 +65,16 @@ button:disabled {
   background: #f5f7f4;
 }
 
+.demo-banner {
+  padding: 8px 16px;
+  border-bottom: 1px solid #7c2d12;
+  background: #fbbf24;
+  color: #3b2104;
+  font-size: 0.84rem;
+  font-weight: 850;
+  text-align: center;
+}
+
 .app-header {
   background: #121f1c;
   color: #fff;

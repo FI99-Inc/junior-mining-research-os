@@ -15,10 +15,12 @@ import {
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import {
   fetchResearchHistory,
+  fetchRuntimeConfig,
   requestResearchRun,
   searchCompanyCandidates,
   type ManualSourceDraft,
-  type ResearchRunResponse
+  type ResearchRunResponse,
+  type RuntimeConfig
 } from "./api/researchApi";
 import { COMPANY_UNIVERSE } from "./domain/companyResolver";
 import { managementHighlights } from "./domain/managementHighlights";
@@ -231,7 +233,15 @@ function TimelineSelector({
   );
 }
 
-function ExplorationGrid({ onResearch, loading }: { onResearch: (company: CompanyCandidate) => void; loading: boolean }) {
+function ExplorationGrid({
+  companies,
+  onResearch,
+  loading
+}: {
+  companies: CompanyCandidate[];
+  onResearch: (company: CompanyCandidate) => void;
+  loading: boolean;
+}) {
   return (
     <section className="explore-panel" aria-label="Explore companies">
       <div className="section-head compact-head">
@@ -242,7 +252,7 @@ function ExplorationGrid({ onResearch, loading }: { onResearch: (company: Compan
         <p>Browse a few names when you do not have a specific ticker in mind. This list can expand as the registry grows.</p>
       </div>
       <div className="explore-grid">
-        {COMPANY_UNIVERSE.slice(0, 16).map((company) => (
+        {companies.map((company) => (
           <article className="explore-card" key={company.id}>
             <div>
               <strong>{company.ticker}</strong>
@@ -1050,12 +1060,25 @@ function NewsPipelineSources() {
   );
 }
 
+function percentageFrom(value: string | undefined) {
+  const match = value?.match(/(\d+(?:\.\d+)?)\s*%/);
+  return match ? Number(match[1]) : undefined;
+}
+
 function ShareOwnershipPie({ run }: { run: ResearchRunResponse }) {
+  const sourcedValues = [
+    percentageFrom(run.shareStructure.publicFloat),
+    percentageFrom(run.shareStructure.insiderOwnership),
+    percentageFrom(run.shareStructure.strategicOwnership),
+    percentageFrom(run.shareStructure.institutionalOwnership)
+  ];
+  const hasCompleteOwnership = sourcedValues.every((value): value is number => value !== undefined) && Math.abs(sourcedValues.reduce((sum, value) => sum + value, 0) - 100) < 0.5;
+  const values = hasCompleteOwnership ? sourcedValues : [52, 14, 18, 16];
   const segments = [
-    { label: "Public float", value: 52, color: "#2a7b6f" },
-    { label: "Insiders", value: 14, color: "#b98d3b" },
-    { label: "Strategic", value: 18, color: "#7b5ea8" },
-    { label: "Institutional", value: 16, color: "#9a6542" }
+    { label: "Public float", value: values[0], color: "#2a7b6f" },
+    { label: "Insiders", value: values[1], color: "#b98d3b" },
+    { label: "Strategic", value: values[2], color: "#7b5ea8" },
+    { label: "Institutional", value: values[3], color: "#9a6542" }
   ];
 
   return (
@@ -1090,7 +1113,9 @@ function ShareOwnershipPie({ run }: { run: ResearchRunResponse }) {
         ))}
       </div>
       <small>
-        Visualization uses a placeholder split until current ownership data is complete. Do not treat it as filed ownership.
+        {hasCompleteOwnership
+          ? "Visualization uses the ownership percentages shown in this report."
+          : "Visualization uses a placeholder split until current ownership data is complete. Do not treat it as filed ownership."}
       </small>
     </div>
   );
@@ -1158,6 +1183,8 @@ export default function App() {
   const [query, setQuery] = useState("USGO");
   const [run, setRun] = useState<ResearchRunResponse | null>(null);
   const [history, setHistory] = useState<ResearchRun[]>([]);
+  const [runtime, setRuntime] = useState<RuntimeConfig>({ mode: "live" });
+  const [exploreCompanies, setExploreCompanies] = useState(COMPANY_UNIVERSE.slice(0, 16));
   const [suggestions, setSuggestions] = useState<CompanyCandidate[]>([]);
   const [activeTab, setActiveTab] = useState<ReportTab>("scorecard");
   const [selectedHorizon, setSelectedHorizon] = useState<TimelineHorizon>("1Y");
@@ -1178,8 +1205,25 @@ export default function App() {
   }
 
   useEffect(() => {
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const config = await fetchRuntimeConfig(controller.signal);
+        if (controller.signal.aborted || config.mode !== "demo") return;
+        const demoCompanies = await searchCompanyCandidates("", controller.signal);
+        if (controller.signal.aborted) return;
+        setRuntime(config);
+        setExploreCompanies(demoCompanies);
+        setQuery(demoCompanies[0]?.ticker ?? "");
+      } catch {
+        // Live mode remains the conservative default if runtime discovery fails.
+      }
+    })();
     void loadHistory();
-    return () => researchRequest.current?.abort();
+    return () => {
+      controller.abort();
+      researchRequest.current?.abort();
+    };
   }, []);
 
   useEffect(() => { reportHeading.current?.focus(); }, [run]);
@@ -1259,6 +1303,11 @@ export default function App() {
   return (
     <main className="app-shell">
       <div className="app-chrome">
+      {runtime.mode === "demo" ? (
+        <div className="demo-banner" role="status">
+          {runtime.demoNotice}
+        </div>
+      ) : null}
       <header className="app-header">
         <div className="app-header-inner">
           <div>
@@ -1328,14 +1377,16 @@ export default function App() {
               onFocus={() => setFocusedSearch("hero")}
               onPick={pickCompany}
             />
-            <ExplorationGrid loading={loading} onResearch={(company) => void runResearch(company.ticker)} />
-            <div className="home-import-panel">
-              <SourceImportPanel
-                importedSources={importedSources}
-                onAdd={(source) => setImportedSources((sources) => [...sources, source])}
-                onClear={() => setImportedSources([])}
-              />
-            </div>
+            <ExplorationGrid companies={exploreCompanies} loading={loading} onResearch={(company) => void runResearch(company.ticker)} />
+            {runtime.mode === "live" ? (
+              <div className="home-import-panel">
+                <SourceImportPanel
+                  importedSources={importedSources}
+                  onAdd={(source) => setImportedSources((sources) => [...sources, source])}
+                  onClear={() => setImportedSources([])}
+                />
+              </div>
+            ) : null}
           </div>
         ) : null}
       </section>
@@ -1780,14 +1831,18 @@ export default function App() {
                   </div>
                   <SourceQualitySummary run={run} />
                   <SourceList sources={run.sources} />
-                  <SourceImportPanel
-                    importedSources={importedSources}
-                    onAdd={(source) => setImportedSources((sources) => [...sources, source])}
-                    onClear={() => setImportedSources([])}
-                  />
-                  <button type="button" className="rerun-button" onClick={() => void runResearch(run.company.ticker)} disabled={loading}>
-                    {loading ? "Running" : "Rerun with imported sources"}
-                  </button>
+                  {runtime.mode === "live" ? (
+                    <>
+                      <SourceImportPanel
+                        importedSources={importedSources}
+                        onAdd={(source) => setImportedSources((sources) => [...sources, source])}
+                        onClear={() => setImportedSources([])}
+                      />
+                      <button type="button" className="rerun-button" onClick={() => void runResearch(run.company.ticker)} disabled={loading}>
+                        {loading ? "Running" : "Rerun with imported sources"}
+                      </button>
+                    </>
+                  ) : null}
                 </section>
               ) : null}
             </>

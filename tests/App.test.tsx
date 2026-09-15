@@ -1,13 +1,65 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "../src/App";
 import { createResearchRun } from "../src/domain/researchEngine";
 import { resolveCompany } from "../src/domain/companyResolver";
 import { sourceAdapterStatuses } from "../src/domain/sourceAdapters";
+import { createDemoResearchRun } from "../server/demoFixture";
 import { syntheticResearchSources } from "./fixtures/syntheticEvidence";
 
 describe("App", () => {
+  afterEach(cleanup);
+
+  it("shows the persistent fictional-data warning when the API reports demo mode", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/api/health")) {
+          return Response.json({
+            status: "ok",
+            mode: "demo",
+            demoNotice: "Demo data — fictional and not investment research"
+          });
+        }
+        if (url.includes("/api/companies")) {
+          return Response.json([
+            {
+              id: "aeon-ridge-minerals-demo",
+              name: "Aeon Ridge Minerals Ltd.",
+              ticker: "AEON.V",
+              exchange: "TSXV",
+              country: "CA",
+              commodityFocus: ["Gold", "Copper"]
+            }
+          ]);
+        }
+        if (url.endsWith("/api/research-runs") && init?.method === "POST") {
+          return Response.json(createDemoResearchRun());
+        }
+        return Response.json([]);
+      })
+    );
+
+    render(<App />);
+
+    const notice = await screen.findByText("Demo data — fictional and not investment research");
+    expect(notice).toHaveAttribute("role", "status");
+    expect(screen.getAllByRole("button", { name: /research aeon\.v/i })).toHaveLength(1);
+    expect(notice).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /research aeon\.v/i }));
+    await screen.findByRole("heading", { name: "Aeon Ridge Minerals Ltd." });
+    expect(screen.getByText("Demo data — fictional and not investment research")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /share structure/i }));
+    const ownershipChart = screen.getByRole("img", { name: /ownership distribution/i }).parentElement!;
+    expect(within(ownershipChart).getByText("67%")).toBeInTheDocument();
+    expect(within(ownershipChart).getByText("8%")).toBeInTheDocument();
+    expect(within(ownershipChart).getByText("15%")).toBeInTheDocument();
+    expect(within(ownershipChart).getByText("10%")).toBeInTheDocument();
+  });
+
   it("generates a single-stock research memo with scorecard, lenses, sources, and history", async () => {
     const company = resolveCompany("USGO");
     if (!company) throw new Error("Missing test company");

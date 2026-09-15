@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "server": "tsx watch server/index.ts",
+    "server:demo": "tsx watch server/index.ts --demo",
     "build": "tsc -b && vite build",
     "typecheck": "tsc --noEmit --noUnusedLocals --noUnusedParameters",
     "test": "vitest run",
