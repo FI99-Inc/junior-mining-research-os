@@ -8,31 +8,42 @@ The application is a research aid, not a buy/sell recommendation. Unsupported fa
 
 - Node.js 22 or newer
 - pnpm 10 or newer
-- Google Chrome or Playwright Chromium for rendered issuer-site collection
+- Playwright-managed Chromium for optional rendered issuer-site collection
 
 ## Local development
 
 Install dependencies:
 
-```powershell
-pnpm.cmd install
+```sh
+pnpm install
+pnpm exec playwright install chromium
+```
+
+On Linux, install Chromium and its required system packages together:
+
+```sh
+pnpm exec playwright install --with-deps chromium
 ```
 
 Start the API in one terminal:
 
-```powershell
-pnpm.cmd server
+```sh
+pnpm server
 ```
 
 Start the web app in a second terminal:
 
-```powershell
-pnpm.cmd dev
+```sh
+pnpm dev
 ```
 
 Open `http://127.0.0.1:5173/`. The Vite server proxies `/api` requests to the Express API at `http://127.0.0.1:4173/`.
 
 The optional `PORT` setting changes the API port from `4173`. If changed, update the Vite proxy in `vite.config.ts` to match. No market-data API key is required.
+
+Playwright uses its managed Chromium build by default. Set `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` only when the deployment must use a specific Chromium-compatible executable. Set `DISABLE_RENDERED_CRAWLING=1` to skip Playwright and use the bounded plain-fetch fallback. If Chromium is absent or cannot launch, the research run continues with plain fetch and reports actionable setup guidance in the adapter status.
+
+On Windows PowerShell, use the `.cmd` shim if `pnpm` is not resolved directly, for example `pnpm.cmd install`, `pnpm.cmd exec playwright install chromium`, `pnpm.cmd server`, and `pnpm.cmd dev`.
 
 Automated SEC EDGAR retrieval is optional and requires a declared application contact. Set `SEC_USER_AGENT` in the shell that starts the API, using the format `Application Name contact@example.org`. Do not commit personal contact details to `.env.example` or source files. Without this setting, SEC collection is skipped and shown as needing configuration; the rest of the research run continues normally.
 
@@ -40,31 +51,31 @@ Automated SEC EDGAR retrieval is optional and requires a declared application co
 
 The demo uses one clearly fictional company and makes no Yahoo Finance, SEC, SEDAR+, newswire, issuer-site, or Playwright requests.
 
-1. Install dependencies with `pnpm.cmd install`.
+1. Install dependencies with `pnpm install`.
 2. Start the fictional API fixture in one terminal:
 
-   ```powershell
-   pnpm.cmd server:demo
+   ```sh
+   pnpm server:demo
    ```
 
 3. Start the web app in a second terminal:
 
-   ```powershell
-   pnpm.cmd dev
+   ```sh
+   pnpm dev
    ```
 
 4. Open `http://127.0.0.1:5173/`, confirm the persistent **Demo data — fictional and not investment research** banner, and select `AEON.V`.
 5. Review Investment Quality, Market Perspectives, Management, Risks, News, Shares, Financials, and Sources. Every company, person, value, event, and `example.invalid` link in this mode is fictional.
 
-The equivalent configuration flag is `DEMO_MODE=1`; in PowerShell, run `$env:DEMO_MODE = "1"` before `pnpm.cmd server`. Restart with `pnpm.cmd server` and no demo flag to use normal live research. Demo mode is read-only and isolated: it exposes only the fictional issuer and ignores imported evidence. Live mode never exposes the demo issuer or fixture.
+The equivalent configuration flag is `DEMO_MODE=1`; in PowerShell, run `$env:DEMO_MODE = "1"` before `pnpm.cmd server`. Restart without the demo flag to use normal live research. Demo mode is read-only and isolated: it exposes only the fictional issuer and ignores imported evidence. Live mode never exposes the demo issuer or fixture.
 
 ## Quality commands
 
-```powershell
-pnpm.cmd typecheck
-pnpm.cmd test
-pnpm.cmd build
-pnpm.cmd check
+```sh
+pnpm typecheck
+pnpm test
+pnpm build
+pnpm check
 ```
 
 `check` runs strict typechecking, the complete Vitest suite, and the production build.

@@ -1,7 +1,12 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { COMPANY_UNIVERSE, resolveCompany } from "../src/domain/companyResolver";
-import { collectEvidence, createTimeoutFetcher, extractIssuerTeamPeople } from "../src/domain/evidencePipeline";
+import {
+  collectEvidence,
+  createPlaywrightBrowserFetcher,
+  createTimeoutFetcher,
+  extractIssuerTeamPeople
+} from "../src/domain/evidencePipeline";
 import type { CompanyCandidate } from "../src/domain/types";
 
 const { launchBrowser } = vi.hoisted(() => ({ launchBrowser: vi.fn() }));
@@ -124,6 +129,105 @@ describe("evidence resource lifecycle", () => {
     expect(signals.length).toBeGreaterThan(0);
     expect(signals.every((signal) => signal.aborted)).toBe(true);
     expect(result.status.adapters.find((adapter) => adapter.id === "company-website")?.status).toBe("unavailable");
+  });
+});
+
+describe("Playwright browser configuration", () => {
+  function mockRenderedBrowser() {
+    const page = {
+      setDefaultTimeout: vi.fn(),
+      goto: vi.fn(async () => ({ ok: () => true })),
+      title: vi.fn(async () => "Issuer leadership"),
+      content: vi.fn(async () => "<main><h1>Leadership</h1></main>"),
+      locator: vi.fn(() => ({ allTextContents: vi.fn(async () => ["Leadership"]) })),
+      evaluate: vi.fn(async () => []),
+      url: vi.fn(() => "https://issuer.test/leadership")
+    };
+    const context = {
+      newPage: vi.fn(async () => page),
+      close: vi.fn(async () => undefined)
+    };
+    const browser = {
+      newContext: vi.fn(async () => context),
+      close: vi.fn(async () => undefined)
+    };
+    launchBrowser.mockResolvedValue(browser);
+    return { browser, context };
+  }
+
+  it("launches Playwright-managed Chromium by default with an application-identifying header", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const { browser } = mockRenderedBrowser();
+    const browserFetcher = createPlaywrightBrowserFetcher();
+
+    await expect(browserFetcher?.("https://issuer.test/leadership")).resolves.toMatchObject({ ok: true });
+
+    expect(launchBrowser).toHaveBeenCalledWith({ headless: true });
+    expect(browser.newContext).toHaveBeenCalledWith({
+      extraHTTPHeaders: { "X-Research-Client": "Junior-Mining-Research-OS/0.1.0" }
+    });
+    expect(browser.newContext).not.toHaveBeenCalledWith(expect.objectContaining({ userAgent: expect.anything() }));
+    await browserFetcher?.close?.();
+  });
+
+  it("uses a configured Chromium-compatible executable when supplied", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    mockRenderedBrowser();
+    const browserFetcher = createPlaywrightBrowserFetcher({ executablePath: "/opt/chromium" });
+
+    await browserFetcher?.("https://issuer.test/leadership");
+
+    expect(launchBrowser).toHaveBeenCalledWith({ headless: true, executablePath: "/opt/chromium" });
+    await browserFetcher?.close?.();
+  });
+
+  it("returns actionable setup guidance when Chromium is missing", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    launchBrowser.mockRejectedValue(new Error("browserType.launch: Executable doesn't exist"));
+    const browserFetcher = createPlaywrightBrowserFetcher();
+
+    await expect(browserFetcher?.("https://issuer.test/leadership")).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringContaining("pnpm exec playwright install chromium")
+    });
+    await expect(browserFetcher?.("https://issuer.test/leadership")).resolves.toMatchObject({
+      error: expect.stringContaining("PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH")
+    });
+    await browserFetcher?.close?.();
+  });
+
+  it("does not create a browser fetcher when rendered crawling is disabled", () => {
+    vi.stubEnv("NODE_ENV", "production");
+
+    expect(createPlaywrightBrowserFetcher({ enabled: false })).toBeUndefined();
+    expect(launchBrowser).not.toHaveBeenCalled();
+  });
+
+  it("uses plain fetch and reports the disabled rendered crawler", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const company: CompanyCandidate = {
+      id: "portable-fetch-test",
+      name: "Portable Mining",
+      ticker: "PORT.V",
+      exchange: "TSXV",
+      country: "CA",
+      commodityFocus: ["Gold"],
+      websiteUrl: "https://issuer.test/"
+    };
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url.startsWith("https://issuer.test")) {
+        return html('<main><a href="/leadership/">Leadership</a><h2>Company</h2></main>');
+      }
+      return new Response("", { status: 404 });
+    };
+
+    const result = await collectEvidence(company, { fetcher, renderedCrawling: false });
+
+    expect(launchBrowser).not.toHaveBeenCalled();
+    expect(result.status.adapters.find((adapter) => adapter.id === "company-website")?.note).toContain(
+      "Rendered crawling disabled; plain fetch fallback used"
+    );
   });
 });
 

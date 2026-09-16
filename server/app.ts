@@ -9,6 +9,10 @@ import { createDemoResearchRun, DEMO_NOTICE, resolveDemoCompany, searchDemoCompa
 
 const allowedSourceTypes: SourceType[] = ["filing", "presentation", "news", "market_data", "regulatory_search", "manual"];
 
+function isEnabledEnvironmentFlag(value: string | undefined) {
+  return /^(1|true|yes)$/i.test(value?.trim() ?? "");
+}
+
 function isHttpUrl(value: string) {
   try {
     return ["http:", "https:"].includes(new URL(value).protocol);
@@ -106,7 +110,11 @@ export function createApp(options: { demoMode?: boolean } = {}) {
 
     const manualSources = normalizeManualSources(req.body?.manualSources);
     const [evidence, { marketSnapshot, supplemental }] = await Promise.all([
-      collectEvidence(company, { secUserAgent: process.env.SEC_USER_AGENT }),
+      collectEvidence(company, {
+        secUserAgent: process.env.SEC_USER_AGENT,
+        renderedCrawling: !isEnabledEnvironmentFlag(process.env.DISABLE_RENDERED_CRAWLING),
+        browserExecutablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
+      }),
       collectMarketData(company)
     ]);
     const run = createResearchRun(

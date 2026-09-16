@@ -7,7 +7,6 @@ import type {
   EvidenceFactCategory,
   SourceDocument
 } from "./types";
-import { existsSync } from "node:fs";
 import type { Browser } from "playwright";
 import { sourceAdapterStatuses } from "./sourceAdapters";
 
@@ -20,6 +19,7 @@ const MAX_TEAM_PAGES = 12;
 const MAX_NEWS_DISCOVERY_PAGES = 8;
 const MAX_NEWS_ARTICLES = 8;
 const MAX_NEWSWIRE_ITEMS = 6;
+const RESEARCH_CLIENT_IDENTIFIER = "Junior-Mining-Research-OS/0.1.0";
 const RETRYABLE_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504]);
 
 const CATEGORY_LABELS: Record<EvidenceFactCategory, string> = {
@@ -72,6 +72,8 @@ export interface EvidenceCollectionResult {
 interface EvidenceOptions {
   fetcher?: typeof fetch;
   browserFetcher?: BrowserPageFetcher;
+  renderedCrawling?: boolean;
+  browserExecutablePath?: string;
   fetchTimeoutMs?: number;
   signal?: AbortSignal;
   now?: () => string;
@@ -270,17 +272,29 @@ function browserUnavailable() {
   return typeof process !== "undefined" && process.env.NODE_ENV === "test";
 }
 
-export function createPlaywrightBrowserFetcher(): BrowserPageFetcher | undefined {
-  if (browserUnavailable()) return undefined;
+export interface PlaywrightBrowserOptions {
+  enabled?: boolean;
+  executablePath?: string;
+}
+
+function playwrightFailureMessage(error: unknown) {
+  const message = error instanceof Error ? error.message : "Playwright page fetch failed";
+  if (/executable.*(?:doesn't exist|not found)|browser.*(?:missing|not found)|chromium.*(?:missing|not installed)/i.test(message)) {
+    return "Playwright Chromium is unavailable. Run `pnpm exec playwright install chromium` or set PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH to a Chromium-compatible executable. Plain-fetch fallback will be used.";
+  }
+  return `Rendered browser collection failed: ${message}. Plain-fetch fallback will be used.`;
+}
+
+export function createPlaywrightBrowserFetcher(options: PlaywrightBrowserOptions = {}): BrowserPageFetcher | undefined {
+  if (options.enabled === false || browserUnavailable()) return undefined;
 
   let browserPromise: Promise<Browser> | undefined;
 
   async function getBrowser() {
     if (!browserPromise) {
       browserPromise = import("playwright").then(async ({ chromium }) => {
-        const chromePath = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
-        const launchOptions = existsSync(chromePath) ? { headless: true, executablePath: chromePath } : { headless: true };
-        return chromium.launch(launchOptions);
+        const executablePath = options.executablePath?.trim();
+        return chromium.launch(executablePath ? { headless: true, executablePath } : { headless: true });
       });
     }
     return browserPromise;
@@ -291,8 +305,7 @@ export function createPlaywrightBrowserFetcher(): BrowserPageFetcher | undefined
     try {
       const browser = await getBrowser();
       const context = await browser.newContext({
-        userAgent:
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36"
+        extraHTTPHeaders: { "X-Research-Client": RESEARCH_CLIENT_IDENTIFIER }
       });
       try {
         const page = await context.newPage();
@@ -332,7 +345,7 @@ export function createPlaywrightBrowserFetcher(): BrowserPageFetcher | undefined
         links: [],
         mode: "playwright" as const,
         ok: false,
-        error: error instanceof Error ? error.message : "Playwright page fetch failed"
+        error: playwrightFailureMessage(error)
       };
     }
   };
@@ -796,7 +809,8 @@ async function collectCompanyWebsiteEvidence(
   company: CompanyCandidate,
   fetcher: Fetcher,
   now: string,
-  browserFetcher?: BrowserPageFetcher
+  browserFetcher?: BrowserPageFetcher,
+  renderedCrawlingDisabled = false
 ): Promise<AdapterEvidenceResult> {
   if (!company.websiteUrl) return { sources: [] as SourceDocument[], adapters: [] as AdapterStatus[] };
   try {
@@ -806,6 +820,7 @@ async function collectCompanyWebsiteEvidence(
     let usedBrowser = false;
     let usedFetchFallback = false;
     let browserFailures = 0;
+    const browserFailureMessages = new Set<string>();
     let requestFailures = 0;
 
     if (browserFetcher) {
@@ -819,6 +834,7 @@ async function collectCompanyWebsiteEvidence(
           .filter((link) => link.href);
       } else {
         browserFailures += 1;
+        if (browserHomepage.error) browserFailureMessages.add(browserHomepage.error);
       }
     }
 
@@ -860,6 +876,7 @@ async function collectCompanyWebsiteEvidence(
           continue;
         }
         browserFailures += 1;
+        if (browserPage.error) browserFailureMessages.add(browserPage.error);
       }
 
       try {
@@ -891,13 +908,16 @@ async function collectCompanyWebsiteEvidence(
     sources.push(...issuerTeamSources);
     const peopleFound = issuerTeamSources.length;
     const pagesFound = teamPageResults.filter((result) => result.people.length).length;
-    const collectionLabel = usedBrowser
-      ? usedFetchFallback
-        ? "Playwright-rendered issuer website search ran; fetch fallback used for unavailable pages"
-        : "Playwright-rendered issuer website search ran"
-      : usedFetchFallback
-        ? "Playwright unavailable; fetch fallback used"
-        : "Plain fetch issuer website search ran";
+    const collectionLabel = renderedCrawlingDisabled
+      ? "Rendered crawling disabled; plain fetch fallback used"
+      : usedBrowser
+        ? usedFetchFallback
+          ? "Playwright-rendered issuer website search ran; fetch fallback used for unavailable pages"
+          : "Playwright-rendered issuer website search ran"
+        : usedFetchFallback
+          ? "Playwright unavailable; fetch fallback used"
+          : "Plain fetch issuer website search ran";
+    const browserFailureDetails = Array.from(browserFailureMessages).slice(0, 1);
     return {
       sources,
       adapters: [
@@ -913,10 +933,11 @@ async function collectCompanyWebsiteEvidence(
             ? [
                 "PDF text extraction for discovered links",
                 peopleFound ? "public profile link reconciliation for issuer-sourced people" : "parseable management or board profile pages",
+                ...browserFailureDetails,
                 ...(browserFailures ? [`${browserFailures} rendered page fetch attempt${browserFailures === 1 ? "" : "s"} failed`] : []),
                 ...(requestFailures ? [`${requestFailures} bounded fetch request${requestFailures === 1 ? "" : "s"} failed`] : [])
               ]
-            : ["issuer document links", "management and governance links"]
+            : ["issuer document links", "management and governance links", ...browserFailureDetails]
         }
       ]
     };
@@ -1022,11 +1043,13 @@ async function collectIssuerNewsEvidence(
   company: CompanyCandidate,
   fetcher: Fetcher,
   now: string,
-  browserFetcher?: BrowserPageFetcher
+  browserFetcher?: BrowserPageFetcher,
+  renderedCrawlingDisabled = false
 ): Promise<AdapterEvidenceResult> {
   if (!company.websiteUrl) return { sources: [], adapters: [] };
   const sources: SourceDocument[] = [];
   let browserFailures = 0;
+  const browserFailureMessages = new Set<string>();
   let requestFailures = 0;
   let successfulPages = 0;
   let usedBrowser = false;
@@ -1046,6 +1069,7 @@ async function collectIssuerNewsEvidence(
           page = rendered;
         } else {
           browserFailures += 1;
+          if (rendered.error) browserFailureMessages.add(rendered.error);
         }
       }
 
@@ -1094,6 +1118,7 @@ async function collectIssuerNewsEvidence(
           page = rendered;
         } else {
           browserFailures += 1;
+          if (rendered.error) browserFailureMessages.add(rendered.error);
         }
       }
 
@@ -1141,13 +1166,15 @@ async function collectIssuerNewsEvidence(
       });
     }
 
-    const modeLabel = usedBrowser
-      ? usedFetchFallback
-        ? "Playwright-rendered issuer news search ran; fetch fallback used for unavailable pages"
-        : "Playwright-rendered issuer news search ran"
-      : usedFetchFallback
-        ? "Playwright unavailable; fetch fallback used"
-        : "Plain fetch issuer news search ran";
+    const modeLabel = renderedCrawlingDisabled
+      ? "Rendered crawling disabled; plain fetch fallback used"
+      : usedBrowser
+        ? usedFetchFallback
+          ? "Playwright-rendered issuer news search ran; fetch fallback used for unavailable pages"
+          : "Playwright-rendered issuer news search ran"
+        : usedFetchFallback
+          ? "Playwright unavailable; fetch fallback used"
+          : "Plain fetch issuer news search ran";
     return {
       sources: sources.filter((source, index, allSources) => allSources.findIndex((candidate) => candidate.url === source.url) === index),
       adapters: [
@@ -1161,6 +1188,7 @@ async function collectIssuerNewsEvidence(
           contributes: ["issuer news releases", "media posts", "drill result updates", "financing and project news"],
           missing: [
             ...(!sources.length ? ["issuer-specific rendered news articles"] : []),
+            ...Array.from(browserFailureMessages).slice(0, 1),
             ...(browserFailures ? [`${browserFailures} rendered news page fetch attempt${browserFailures === 1 ? "" : "s"} failed`] : []),
             ...(requestFailures ? [`${requestFailures} bounded fetch request${requestFailures === 1 ? "" : "s"} failed`] : [])
           ]
@@ -1305,8 +1333,15 @@ function dedupeSources(sources: SourceDocument[]) {
 
 export async function collectEvidence(company: CompanyCandidate, options: EvidenceOptions = {}): Promise<EvidenceCollectionResult> {
   const fetcher = createTimeoutFetcher(options.fetcher ?? fetch, options.fetchTimeoutMs, options.signal);
-  const ownedBrowserFetcher = options.browserFetcher ? undefined : createPlaywrightBrowserFetcher();
-  const rawBrowserFetcher = options.browserFetcher ?? ownedBrowserFetcher;
+  const renderedCrawlingDisabled = options.renderedCrawling === false;
+  const providedBrowserFetcher = renderedCrawlingDisabled ? undefined : options.browserFetcher;
+  const ownedBrowserFetcher = providedBrowserFetcher
+    ? undefined
+    : createPlaywrightBrowserFetcher({
+        enabled: !renderedCrawlingDisabled,
+        executablePath: options.browserExecutablePath
+      });
+  const rawBrowserFetcher = providedBrowserFetcher ?? ownedBrowserFetcher;
   const browserFetcher = rawBrowserFetcher ? cachedBrowserFetcher(rawBrowserFetcher) : undefined;
   try {
     const now = options.now?.() ?? retrievedAt();
@@ -1315,8 +1350,8 @@ export async function collectEvidence(company: CompanyCandidate, options: Eviden
     const results = await Promise.allSettled([
       collectSecEvidence(company, fetcher, now, options),
       collectSedarEvidence(company),
-      collectCompanyWebsiteEvidence(company, fetcher, now, browserFetcher),
-      collectIssuerNewsEvidence(company, fetcher, now, browserFetcher),
+      collectCompanyWebsiteEvidence(company, fetcher, now, browserFetcher, renderedCrawlingDisabled),
+      collectIssuerNewsEvidence(company, fetcher, now, browserFetcher, renderedCrawlingDisabled),
       collectNewswireEvidence(company, fetcher, now, sleep),
       collectManagementDiscoveryEvidence(company)
     ]);

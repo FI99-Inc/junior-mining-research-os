@@ -25,7 +25,16 @@ Yahoo Finance is accessed through `yahoo-finance2` as the only market-data provi
 
 ## Issuer websites
 
-Issuer management and news pages are collected with Playwright first and bounded plain-fetch fallback. Each attempt has an eight-second timeout. A run considers at most 12 team pages, eight news discovery pages, and eight news articles; failed browser pages receive at most one plain-fetch fallback. Sites may block automation, load content in unsupported ways, or change structure, and those outcomes are reported as unavailable or partial rather than inferred.
+Issuer management and news pages are collected with Playwright-managed Chromium first and bounded plain-fetch fallback. Install the managed browser with `pnpm exec playwright install chromium`; on Linux, `pnpm exec playwright install --with-deps chromium` also installs required system packages. Each attempt has an eight-second timeout. A run considers at most 12 team pages, eight news discovery pages, and eight news articles; failed browser pages receive at most one plain-fetch fallback. Sites may block automation, load content in unsupported ways, or change structure, and those outcomes are reported as unavailable or partial rather than inferred.
+
+Playwright keeps its native, current browser user agent. The crawler identifies the application with the `X-Research-Client` request header instead of pretending to be a fixed browser release.
+
+Two optional environment settings control rendered crawling:
+
+- `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` uses a specified Chromium-compatible executable instead of Playwright's managed browser. Do not commit machine-specific paths.
+- `DISABLE_RENDERED_CRAWLING=1` disables browser launch and uses plain fetch directly. Values `true` and `yes` are also accepted.
+
+If Chromium is missing or cannot launch, collection does not abort the research run. The issuer adapters use plain fetch where possible and report guidance to run `pnpm exec playwright install chromium` or configure the executable path. On Windows PowerShell, `pnpm.cmd exec playwright install chromium` is equivalent.
 
 ## GlobeNewswire
 
