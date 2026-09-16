@@ -1,108 +1,4 @@
-import type { AdapterStatus, AnalystForecast, CompanyCandidate, FinancialSnapshot, MarketSnapshot, ShareStructure, SourceDocument } from "./types";
-
-const retrievedAt = "2026-06-29T12:00:00.000Z";
-
-const seededSources: Record<string, SourceDocument[]> = {
-  "us-gold-mining": [
-    {
-      id: "sec-usgo-10k",
-      title: "SEC annual filing",
-      sourceType: "filing",
-      publisher: "SEC EDGAR",
-      url: "https://www.sec.gov/search-filings/edgar-application-programming-interfaces",
-      retrievedAt,
-      excerpts: [
-        "The company is an exploration-stage issuer focused on the Whistler gold-copper project in Alaska.",
-        "The company reported no revenue from mining operations and expects to need additional financing."
-      ]
-    },
-    {
-      id: "usgo-presentation",
-      title: "Corporate presentation",
-      sourceType: "presentation",
-      publisher: "Company website",
-      url: "https://example.com/usgo-presentation",
-      retrievedAt,
-      excerpts: [
-        "Management highlights district-scale exploration potential and proximity to existing infrastructure.",
-        "Upcoming catalysts include drilling results and updated technical work."
-      ]
-    },
-    {
-      id: "usgo-drill-news",
-      title: "Exploration update highlights drilling and technical work",
-      sourceType: "news",
-      publisher: "Company news",
-      url: "https://example.com/usgo-drill-news",
-      retrievedAt,
-      excerpts: [
-        "The company reported drilling-focused exploration updates at the Whistler project.",
-        "The update frames drill results and technical work as near-term catalysts for evaluating project scale."
-      ]
-    }
-  ],
-  "snowline-gold": [
-    {
-      id: "sedar-snowline-search",
-      title: "SEDAR+ disclosure search placeholder",
-      sourceType: "regulatory_search",
-      publisher: "SEDAR+",
-      url: "https://www.sedarplus.ca/",
-      retrievedAt,
-      excerpts: [
-        "SEDAR+ public search is the required regulatory discovery path for Canadian issuer filings.",
-        "Upcoming catalysts include drilling results and updated technical work."
-      ]
-    },
-    {
-      id: "snowline-presentation",
-      title: "Exploration presentation",
-      sourceType: "presentation",
-      publisher: "Company website",
-      url: "https://example.com/snowline-presentation",
-      retrievedAt,
-      excerpts: ["The company describes a gold exploration project with district-scale discovery potential."]
-    }
-  ],
-  "g-mining-ventures": [
-    {
-      id: "sedar-gmin-search",
-      title: "SEDAR+ disclosure search placeholder",
-      sourceType: "regulatory_search",
-      publisher: "SEDAR+",
-      url: "https://www.sedarplus.ca/",
-      retrievedAt,
-      excerpts: ["Canadian issuer filings should be validated through SEDAR+ public search."]
-    }
-  ],
-  "western-copper-gold": [
-    {
-      id: "sec-wrn-filing",
-      title: "SEC filing adapter result",
-      sourceType: "filing",
-      publisher: "SEC EDGAR",
-      url: "https://www.sec.gov/search-filings/edgar-application-programming-interfaces",
-      retrievedAt,
-      excerpts: ["The issuer has copper and gold project exposure and should be reviewed for permitting and technical milestones."]
-    }
-  ],
-  "f3-uranium": [
-    {
-      id: "sedar-f3-search",
-      title: "SEDAR+ disclosure search placeholder",
-      sourceType: "regulatory_search",
-      publisher: "SEDAR+",
-      url: "https://www.sedarplus.ca/",
-      retrievedAt,
-      excerpts: ["Canadian uranium exploration disclosure requires document-level review through SEDAR+."]
-    }
-  ]
-};
-
-export interface SourceCollectionResult {
-  sources: SourceDocument[];
-  adapters: AdapterStatus[];
-}
+import type { AdapterStatus, AnalystForecast, CompanyCandidate, FinancialSnapshot, MarketSnapshot, ShareStructure } from "./types";
 
 interface YahooQuote {
   symbol?: string;
@@ -536,51 +432,32 @@ export async function collectMarketSnapshot(
   };
 }
 
-export function collectSources(company: CompanyCandidate): SourceCollectionResult {
-  return {
-    sources: seededSources[company.id] ?? [],
-    adapters: [
-      {
-        id: "sec-edgar",
-        name: "SEC EDGAR APIs",
-        status: company.country === "US" ? "seeded" : "configured",
-        note: "Official U.S. filing adapter boundary; V1 uses seeded excerpts and links to the official API docs.",
-        contributes: ["annual and quarterly filing discovery", "risk-factor excerpts", "financing and revenue disclosures"],
-        missing: ["structured cash runway extraction", "share-count table extraction", "S-K 1300 technical-report summary parsing"]
-      },
-      {
-        id: "sedar-plus",
-        name: "SEDAR+ Public Search",
-        status: company.country === "CA" ? "seeded" : "configured",
-        note: "Canadian disclosure discovery is represented as a cited public-search source because no clean public API is assumed.",
-        contributes: ["Canadian filing discovery path", "regulatory-search provenance", "issuer disclosure availability"],
-        missing: ["automated document download", "NI 43-101 technical report parsing", "management information circular extraction"]
-      },
-      {
-        id: "market-data",
-        name: "Yahoo/YFinance market data",
-        status: "configured",
-        note: "Yahoo Finance/YFinance supplies market data where available; missing quote fields remain unavailable.",
-        contributes: [
-          "current price",
-          "market cap",
-          "volume and average volume",
-          "52-week range",
-          "shares outstanding when available",
-          "Yahoo analyst targets when available",
-          "Yahoo financial summary fields",
-          "Yahoo public float and holder percentages when available"
-        ],
-        missing: ["analyst roster and publication dates", "fully diluted ownership", "warrants and options", "filing-backed cash runway"]
-      },
-      {
-        id: "manual-import",
-        name: "Manual PDF/source import",
-        status: "manual",
-        note: "Reserved for presentations, technical reports, and notes the automated run misses.",
-        contributes: ["technical reports", "investor presentations", "manual fact overrides with provenance"],
-        missing: ["operator upload workflow", "PDF table extraction", "human approval queue for corrected facts"]
-      }
-    ]
-  };
+export function sourceAdapterStatuses(_company: CompanyCandidate): AdapterStatus[] {
+  return [
+    {
+      id: "market-data",
+      name: "Yahoo/YFinance market data",
+      status: "configured",
+      note: "Yahoo Finance/YFinance supplies best-effort market data where available; missing or failed fields remain unavailable and are not filing-backed.",
+      contributes: [
+        "current market price",
+        "market cap",
+        "volume and average volume",
+        "52-week range",
+        "shares outstanding when available",
+        "Yahoo analyst targets when available",
+        "Yahoo financial summary fields",
+        "Yahoo public float and holder percentages when available"
+      ],
+      missing: ["analyst roster and publication dates", "fully diluted ownership", "warrants and options", "filing-backed cash runway"]
+    },
+    {
+      id: "manual-import",
+      name: "Manual PDF/source import",
+      status: "manual",
+      note: "User-supplied documents and excerpts enter a run only through the explicit manual-source request field.",
+      contributes: ["technical reports", "investor presentations", "manual evidence with provenance"],
+      missing: ["automatic PDF text extraction", "human approval queue for corrected facts"]
+    }
+  ];
 }

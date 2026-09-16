@@ -1,7 +1,12 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { COMPANY_UNIVERSE, resolveCompany } from "../src/domain/companyResolver";
-import { collectEvidence, createTimeoutFetcher, extractIssuerTeamPeople } from "../src/domain/evidencePipeline";
+import {
+  collectEvidence,
+  createPlaywrightBrowserFetcher,
+  createTimeoutFetcher,
+  extractIssuerTeamPeople
+} from "../src/domain/evidencePipeline";
 import type { CompanyCandidate } from "../src/domain/types";
 
 const { launchBrowser } = vi.hoisted(() => ({ launchBrowser: vi.fn() }));
@@ -123,7 +128,106 @@ describe("evidence resource lifecycle", () => {
     const result = await collectEvidence(company, { fetcher, browserFetcher, fetchTimeoutMs: 5 });
     expect(signals.length).toBeGreaterThan(0);
     expect(signals.every((signal) => signal.aborted)).toBe(true);
-    expect(result.status.adapters.find((adapter) => adapter.id === "company-website")?.status).toBe("needs_key");
+    expect(result.status.adapters.find((adapter) => adapter.id === "company-website")?.status).toBe("unavailable");
+  });
+});
+
+describe("Playwright browser configuration", () => {
+  function mockRenderedBrowser() {
+    const page = {
+      setDefaultTimeout: vi.fn(),
+      goto: vi.fn(async () => ({ ok: () => true })),
+      title: vi.fn(async () => "Issuer leadership"),
+      content: vi.fn(async () => "<main><h1>Leadership</h1></main>"),
+      locator: vi.fn(() => ({ allTextContents: vi.fn(async () => ["Leadership"]) })),
+      evaluate: vi.fn(async () => []),
+      url: vi.fn(() => "https://issuer.test/leadership")
+    };
+    const context = {
+      newPage: vi.fn(async () => page),
+      close: vi.fn(async () => undefined)
+    };
+    const browser = {
+      newContext: vi.fn(async () => context),
+      close: vi.fn(async () => undefined)
+    };
+    launchBrowser.mockResolvedValue(browser);
+    return { browser, context };
+  }
+
+  it("launches Playwright-managed Chromium by default with an application-identifying header", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const { browser } = mockRenderedBrowser();
+    const browserFetcher = createPlaywrightBrowserFetcher();
+
+    await expect(browserFetcher?.("https://issuer.test/leadership")).resolves.toMatchObject({ ok: true });
+
+    expect(launchBrowser).toHaveBeenCalledWith({ headless: true });
+    expect(browser.newContext).toHaveBeenCalledWith({
+      extraHTTPHeaders: { "X-Research-Client": "Junior-Mining-Research-OS/0.1.0" }
+    });
+    expect(browser.newContext).not.toHaveBeenCalledWith(expect.objectContaining({ userAgent: expect.anything() }));
+    await browserFetcher?.close?.();
+  });
+
+  it("uses a configured Chromium-compatible executable when supplied", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    mockRenderedBrowser();
+    const browserFetcher = createPlaywrightBrowserFetcher({ executablePath: "/opt/chromium" });
+
+    await browserFetcher?.("https://issuer.test/leadership");
+
+    expect(launchBrowser).toHaveBeenCalledWith({ headless: true, executablePath: "/opt/chromium" });
+    await browserFetcher?.close?.();
+  });
+
+  it("returns actionable setup guidance when Chromium is missing", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    launchBrowser.mockRejectedValue(new Error("browserType.launch: Executable doesn't exist"));
+    const browserFetcher = createPlaywrightBrowserFetcher();
+
+    await expect(browserFetcher?.("https://issuer.test/leadership")).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringContaining("pnpm exec playwright install chromium")
+    });
+    await expect(browserFetcher?.("https://issuer.test/leadership")).resolves.toMatchObject({
+      error: expect.stringContaining("PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH")
+    });
+    await browserFetcher?.close?.();
+  });
+
+  it("does not create a browser fetcher when rendered crawling is disabled", () => {
+    vi.stubEnv("NODE_ENV", "production");
+
+    expect(createPlaywrightBrowserFetcher({ enabled: false })).toBeUndefined();
+    expect(launchBrowser).not.toHaveBeenCalled();
+  });
+
+  it("uses plain fetch and reports the disabled rendered crawler", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const company: CompanyCandidate = {
+      id: "portable-fetch-test",
+      name: "Portable Mining",
+      ticker: "PORT.V",
+      exchange: "TSXV",
+      country: "CA",
+      commodityFocus: ["Gold"],
+      websiteUrl: "https://issuer.test/"
+    };
+    const fetcher: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url.startsWith("https://issuer.test")) {
+        return html('<main><a href="/leadership/">Leadership</a><h2>Company</h2></main>');
+      }
+      return new Response("", { status: 404 });
+    };
+
+    const result = await collectEvidence(company, { fetcher, renderedCrawling: false });
+
+    expect(launchBrowser).not.toHaveBeenCalled();
+    expect(result.status.adapters.find((adapter) => adapter.id === "company-website")?.note).toContain(
+      "Rendered crawling disabled; plain fetch fallback used"
+    );
   });
 });
 
@@ -500,7 +604,11 @@ describe("collectEvidence", () => {
       return new Response("", { status: 404 });
     });
 
-    const result = await collectEvidence(company, { fetcher });
+    const result = await collectEvidence(company, {
+      fetcher,
+      secUserAgent: "Junior Mining Research OS research@example.invalid",
+      secRequestIntervalMs: 0
+    });
 
     expect(fetched).toContain("https://libertygold.ca/corporate/");
     expect(result.sources).toEqual(
@@ -741,7 +849,7 @@ describe("collectEvidence", () => {
     expect(result.sources.filter((source) => source.publisher === "Issuer website news")).toEqual([]);
   });
 
-  it("collects cited SEC, company-site, newswire, and insider evidence for a U.S. issuer", async () => {
+  it("collects retrieved SEC, issuer-team, newswire, and insider evidence for a U.S. issuer", async () => {
     const company = resolveCompany("USGO");
     if (!company) throw new Error("Missing test company");
 
@@ -761,6 +869,17 @@ describe("collectEvidence", () => {
             }
           }
         });
+      }
+      if (url.endsWith("/usgo-10k.htm")) {
+        return html(`
+          <main>
+            <p>The filing includes an S-K 1300 technical report summary, mineral resource estimate, metallurgy, infrastructure, and permitting disclosure.</p>
+            <p>The filing reports the cash balance, working capital, shares outstanding, and financing requirements.</p>
+          </main>
+        `);
+      }
+      if (url.endsWith("/usgo-form4.xml")) {
+        return html("<ownershipDocument><remarks>Insider ownership and reportable transactions are disclosed for the reporting owner.</remarks></ownershipDocument>");
       }
       if (url === company.websiteUrl) {
         return html(`
@@ -793,15 +912,16 @@ describe("collectEvidence", () => {
       return new Response("", { status: 404 });
     });
 
-    const result = await collectEvidence(company, { fetcher });
+    const result = await collectEvidence(company, {
+      fetcher,
+      secUserAgent: "Junior Mining Research OS research@example.invalid",
+      secRequestIntervalMs: 0
+    });
 
     expect(result.sources).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ publisher: "SEC EDGAR", sourceType: "filing" }),
-        expect.objectContaining({ publisher: "Company website", title: expect.stringContaining("technical report") }),
-        expect.objectContaining({ publisher: "Company website", title: expect.stringContaining("Management") }),
         expect.objectContaining({ publisher: "Issuer team page", title: expect.stringContaining("Jane Doe") }),
-        expect.objectContaining({ publisher: "Issuer management profile", title: expect.stringContaining("Tim Smith") }),
         expect.objectContaining({ publisher: "GlobeNewswire", sourceType: "news" }),
         expect.objectContaining({ publisher: "SEC EDGAR Insider Ownership", sourceType: "filing" })
       ])
@@ -819,10 +939,107 @@ describe("collectEvidence", () => {
     expect(result.status.categories.find((item) => item.id === "technical_report")?.status).toBe("found");
     expect(result.status.categories.find((item) => item.id === "insider_ownership")?.status).toBe("found");
     expect(result.status.adapters.find((adapter) => adapter.id === "sec-edgar-live")?.status).toBe("configured");
-    expect(result.status.adapters.find((adapter) => adapter.id === "management-roster")?.status).toBe("configured");
+    expect(result.status.adapters.find((adapter) => adapter.id === "management-roster")?.status).toBe("manual");
     expect(result.status.adapters.find((adapter) => adapter.id === "company-website")?.note).toMatch(/issuer team profile/i);
-    expect(result.status.adapters.find((adapter) => adapter.id === "linkedin-candidate-discovery")?.note).toMatch(/three-tier status/i);
-    expect(result.status.adapters.find((adapter) => adapter.id === "composio-management-search")?.status).toBe("needs_key");
+    expect(result.status.adapters.find((adapter) => adapter.id === "linkedin-candidate-discovery")?.note).toMatch(/supplied or discovered public profile links/i);
+    expect(result.status.adapters.some((adapter) => adapter.id === "composio-management-search")).toBe(false);
+  });
+
+  it("requires a declared SEC application and contact before making EDGAR requests", async () => {
+    const company = resolveCompany("USGO");
+    if (!company) throw new Error("Missing test company");
+    const fetcher = vi.fn(async (_input: RequestInfo | URL) => new Response("", { status: 503 }));
+
+    const result = await collectEvidence(company, { fetcher });
+
+    expect(fetcher.mock.calls.some(([input]) => /sec\.gov/i.test(String(input)))).toBe(false);
+    expect(result.status.adapters.find((adapter) => adapter.id === "sec-edgar-live")).toMatchObject({
+      status: "needs_configuration",
+      note: expect.stringMatching(/SEC_USER_AGENT/i)
+    });
+  });
+
+  it("identifies SEC requests and retries a throttled response with bounded backoff", async () => {
+    const company = resolveCompany("USGO");
+    if (!company) throw new Error("Missing test company");
+    let tickerAttempts = 0;
+    const delays: number[] = [];
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("company_tickers.json")) {
+        expect(new Headers(init?.headers).get("User-Agent")).toBe("Junior Mining Research OS research@example.invalid");
+        tickerAttempts += 1;
+        if (tickerAttempts === 1) return new Response("Rate limited", { status: 429, headers: { "Retry-After": "1" } });
+        return json({ 0: { cik_str: 1947244, ticker: "USGO", title: "US GOLDMINING INC." } });
+      }
+      if (url.includes("data.sec.gov/submissions/CIK0001947244.json")) {
+        expect(new Headers(init?.headers).get("User-Agent")).toBe("Junior Mining Research OS research@example.invalid");
+        return json({ filings: { recent: { accessionNumber: [], primaryDocument: [], form: [], filingDate: [] } } });
+      }
+      return new Response("", { status: 404 });
+    });
+
+    const result = await collectEvidence(company, {
+      fetcher,
+      secUserAgent: "Junior Mining Research OS research@example.invalid",
+      secRequestIntervalMs: 0,
+      sleep: async (milliseconds) => { delays.push(milliseconds); }
+    });
+
+    expect(tickerAttempts).toBe(2);
+    expect(delays).toContain(1000);
+    expect(result.status.adapters.find((adapter) => adapter.id === "sec-edgar-live")?.status).toBe("configured");
+  });
+
+  it("bounds GlobeNewswire retries and reports temporary feed failures as unavailable", async () => {
+    const company: CompanyCandidate = {
+      id: "newswire-policy-test",
+      name: "Policy Test Mining",
+      ticker: "PTM.V",
+      exchange: "TSXV",
+      country: "CA",
+      commodityFocus: ["Gold"]
+    };
+    let newswireAttempts = 0;
+    const fetcher: typeof fetch = vi.fn(async (input) => {
+      if (String(input).includes("globenewswire.com")) newswireAttempts += 1;
+      return new Response("Temporarily unavailable", { status: 503 });
+    });
+
+    const result = await collectEvidence(company, { fetcher, sleep: async () => undefined });
+
+    expect(newswireAttempts).toBe(2);
+    expect(result.status.adapters.find((adapter) => adapter.id === "newswire-rss")).toMatchObject({
+      status: "unavailable",
+      note: expect.stringMatching(/HTTP 503/i)
+    });
+  });
+
+  it("keeps issuer website collection within its documented request budget", async () => {
+    const company: CompanyCandidate = {
+      id: "issuer-budget-test",
+      name: "Issuer Budget Mining",
+      ticker: "IBM.V",
+      exchange: "TSXV",
+      country: "CA",
+      commodityFocus: ["Copper"],
+      websiteUrl: "https://issuer-budget.invalid/"
+    };
+    const links = Array.from({ length: 100 }, (_, index) =>
+      `<a href="/news/announces-drill-results-${index}">Announces drill results ${index}</a>`
+    ).join("");
+    let issuerRequests = 0;
+    const fetcher: typeof fetch = vi.fn(async (input) => {
+      if (String(input).startsWith(company.websiteUrl!)) {
+        issuerRequests += 1;
+        return html(`<main>${links}</main>`);
+      }
+      return html("<rss><channel></channel></rss>");
+    });
+
+    await collectEvidence(company, { fetcher, sleep: async () => undefined });
+
+    expect(issuerRequests).toBeLessThanOrEqual(29);
   });
 
   it("records Canadian SEDAR+ discovery gaps without inventing unsupported facts", async () => {
@@ -837,7 +1054,12 @@ describe("collectEvidence", () => {
 
     const result = await collectEvidence(company, { fetcher });
 
-    expect(result.status.adapters.find((adapter) => adapter.id === "sedar-plus-live")?.status).toBe("needs_key");
+    expect(fetcher.mock.calls.some(([input]) => String(input).includes("sedarplus.ca"))).toBe(false);
+    expect(result.status.adapters.find((adapter) => adapter.id === "sedar-plus-reference")).toMatchObject({
+      name: "SEDAR+ public disclosure reference",
+      status: "manual",
+      note: expect.stringMatching(/no automated filing discovery/i)
+    });
     expect(result.status.categories.find((item) => item.id === "fully_diluted_shares")?.status).toBe("missing");
     expect(result.facts).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ category: "fully_diluted_shares" })])

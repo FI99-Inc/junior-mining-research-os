@@ -54,7 +54,7 @@ export const COMPANY_UNIVERSE: CompanyCandidate[] = [
       }
     ],
     shareStructure: {
-      asOf: "Company profile placeholder - verify latest filings",
+      asOf: "Unavailable",
       sharesOutstanding: "Unavailable",
       publicFloat: "Unavailable",
       insiderOwnership: "Unavailable",

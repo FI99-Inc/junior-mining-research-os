@@ -1099,25 +1099,23 @@ function buildInvestorLenses(company: CompanyCandidate, sources: SourceDocument[
   const citations = sourceIds(sources);
   const noEvidence = sources.length === 0;
   const disclaimer =
-    "This is a synthesized analytical lens based on publicly discussed investing principles; it is not a statement of any investor's current opinion.";
+    "This independent analytical framework does not represent any person or organization and does not imply affiliation, endorsement, or investment advice.";
 
   const view = (focus: string) =>
     noEvidence
-      ? "Current sources are insufficient for a supported view. Treat this lens as a checklist of what to verify next."
-      : `${company.name} should be judged through ${focus}, with every positive claim tied back to the cited source set.`;
+      ? "Current sources are insufficient for a supported view. Use this framework as a checklist of what to verify next."
+      : `Apply ${focus} to ${company.name}, with every positive claim tied back to the cited source set.`;
 
   return [
     {
-      id: "rick-rule",
-      name: "Rick Rule",
-      initials: "RR",
-      portraitTone: "gold",
-      portraitUrl: "/investors/rick-rule.jpg",
-      portraitSourceUrl: "https://ruleinvestmentmedia.com/",
+      id: "contrarian-downside-survival",
+      name: "Contrarian and downside-survival lens",
+      initials: "CD",
+      visualTone: "gold",
       approach: "Contrarian resource optionality, management credibility, jurisdiction, and survival through weak markets.",
       focus: "contrarian resource optionality, jurisdiction, management credibility, and financing survival",
       background:
-        "Rick Rule is a long-time natural-resource investor and speculator associated with resource-cycle investing, private placements, management due diligence, and downside-first thinking.",
+        "This resource-cycle investing framework starts with downside survival, management credibility, financing resilience, and whether the asset offers meaningful optionality.",
       view: view("resource optionality and downside survival"),
       positives: noEvidence ? ["Potential upside cannot be assessed without project evidence."] : ["Exploration optionality is present if the cited project scale is credible."],
       concerns: ["Avoid promotion-driven narratives without evidence for scale, cost of capital, and management execution."],
@@ -1128,24 +1126,19 @@ function buildInvestorLenses(company: CompanyCandidate, sources: SourceDocument[
         "Can the company survive weak markets without destructive dilution?",
         "Are jurisdiction, title, permitting, and technical claims independently verifiable?"
       ],
-      sourceLinks: [
-        { label: "Rule Investment Media", url: "https://ruleinvestmentmedia.com/" },
-        { label: "Rule Symposium", url: "https://rulesymposium.com/" }
-      ],
+      sourceLinks: [],
       citationIds: citations,
       disclaimer
     },
     {
-      id: "eric-sprott",
-      name: "Eric Sprott",
-      initials: "ES",
-      portraitTone: "silver",
-      portraitUrl: "/investors/eric-sprott.jpg",
-      portraitSourceUrl: "https://sprott.carleton.ca/eric-sprott/",
+      id: "discovery-sponsorship",
+      name: "Discovery and sponsorship lens",
+      initials: "DS",
+      visualTone: "silver",
       approach: "Discovery upside, strong sponsorship, insider alignment, and whether financing can accelerate exploration.",
       focus: "high-upside discovery potential, insider alignment, large backers, and whether financing can accelerate exploration",
       background:
-        "Eric Sprott is a Canadian resource investor known for precious-metals conviction, backing exploration companies, and emphasizing discovery upside and insider alignment.",
+        "This framework tests whether credible sponsorship, aligned ownership, and adequately funded exploration can convert geological potential into repeatable discovery evidence.",
       view: view("sponsorship quality, discovery upside, and whether capital backing improves the odds of a real discovery"),
       positives: ["Strategic sponsorship matters when it funds drilling, signals conviction, and reduces near-term financing stress."],
       concerns: ["Prominent backers do not replace deposit evidence, technical validation, or disciplined entry price."],
@@ -1156,24 +1149,19 @@ function buildInvestorLenses(company: CompanyCandidate, sources: SourceDocument[
         "Are drill results showing grade continuity, scale, and repeatability?",
         "Can the company keep exploration momentum without giving away too much dilution?"
       ],
-      sourceLinks: [
-        { label: "Sprott Inc.", url: "https://sprott.com/" },
-        { label: "Sprott Money", url: "https://www.sprottmoney.com/" }
-      ],
+      sourceLinks: [],
       citationIds: citations,
       disclaimer
     },
     {
-      id: "marin-katusa",
-      name: "Marin Katusa",
-      initials: "MK",
-      portraitTone: "copper",
-      portraitUrl: "/investors/marin-katusa.jpg",
-      portraitSourceUrl: "https://www.goodreads.com/author/show/7183630.Marin_Katusa",
+      id: "macro-jurisdiction-capital-scarcity",
+      name: "Macro, jurisdiction, and capital-scarcity lens",
+      initials: "MC",
+      visualTone: "copper",
       approach: "Macro cycle, capital scarcity, jurisdiction, incentives, and asymmetric upside in scarce resource themes.",
       focus: "commodity cycle, jurisdiction, capital scarcity, management incentives, and asymmetry versus macro demand",
       background:
-        "Marin Katusa is a resource-sector author and investor associated with macro-aware commodity themes, jurisdictional risk, capital scarcity, and incentive-focused due diligence.",
+        "This framework connects commodity-cycle conditions with jurisdiction, infrastructure, incentives, capital availability, and the dilution required to reach the next value milestone.",
       view: view("macro tailwinds, jurisdictional risk, and whether the story has asymmetric upside if the commodity cycle strengthens"),
       positives: [`${company.commodityFocus.join(", ")} exposure can matter more if macro demand and capital flows turn supportive.`],
       concerns: ["Macro themes should not overpower company-specific financing, permitting, and asset-quality risk."],
@@ -1184,10 +1172,7 @@ function buildInvestorLenses(company: CompanyCandidate, sources: SourceDocument[
         "Are management incentives aligned with common shareholders?",
         "Is the upside asymmetric after considering capital needs and dilution?"
       ],
-      sourceLinks: [
-        { label: "Katusa Research", url: "https://katusaresearch.com/" },
-        { label: "Katusa's resource investing book", url: "https://katusaresearch.com/the-colder-war/" }
-      ],
+      sourceLinks: [],
       citationIds: citations,
       disclaimer
     }
@@ -1239,11 +1224,13 @@ function managementGroup(role: string): NonNullable<ManagementPerson["group"]> {
   return "project_lead";
 }
 
-function managementSourceStatus(person: ManagementPerson): NonNullable<ManagementPerson["sourceStatus"]> {
-  if (!person.sourceUrl) return "unknown";
-  if (/sec\.gov|sedarplus|sedi\.ca/i.test(person.sourceUrl)) return "filing";
-  if (/linkedin\.com/i.test(person.sourceUrl)) return "candidate";
-  return "issuer";
+function managementSourceStatusFromEvidence(
+  sources: ManagementEvidence["sources"]
+): NonNullable<ManagementPerson["sourceStatus"]> {
+  if (sources.some((source) => source.sourceType === "filing" || /sec\.gov|sedarplus|sedi\.ca/i.test(source.url))) return "filing";
+  if (sources.some((source) => /company website|issuer/i.test(source.publisher))) return "issuer";
+  if (sources.some((source) => /linkedin\.com/i.test(source.url))) return "candidate";
+  return "unknown";
 }
 
 function linkedInUrlFromSources(person: ManagementPerson, sources: ManagementEvidence["sources"]) {
@@ -1259,14 +1246,14 @@ function linkedInStatusFromSources(
   linkedInUrl: string | undefined,
   sources: ManagementEvidence["sources"]
 ): NonNullable<ManagementPerson["linkedInStatus"]> {
-  if (person.linkedInStatus) return person.linkedInStatus;
   if (!linkedInUrl) return "needs_review";
   const name = person.name.toLowerCase();
-  const issuerLinkedInSource = sources.some((source) => {
+  const matchingLinkedInSource = sources.find((source) => {
     const haystack = `${source.personName ?? ""} ${source.title} ${source.publisher} ${source.excerpt}`.toLowerCase();
-    return source.url === linkedInUrl && /company website|issuer/i.test(source.publisher) && haystack.includes(name);
+    return source.url === linkedInUrl && haystack.includes(name);
   });
-  return issuerLinkedInSource ? "verified" : "likely_match";
+  if (!matchingLinkedInSource) return "needs_review";
+  return /company website|issuer|filing/i.test(matchingLinkedInSource.publisher) ? "verified" : "likely_match";
 }
 
 function collectLinkedInCandidates(
@@ -1383,48 +1370,24 @@ function normalizedPersonName(value: string) {
   return value.toLowerCase().replace(/[^a-z\s'-]/g, " ").replace(/\s+/g, " ").trim();
 }
 
-function issuerGroupFromExcerpts(excerpts: string[]): ManagementPerson["group"] {
-  const groupLine = excerpts.find((excerpt) => excerpt.startsWith("Issuer team group:"));
-  const group = groupLine?.replace(/^Issuer team group:\s*/i, "").replace(/\.$/, "").trim();
-  return group === "executive" || group === "board" || group === "technical" || group === "advisor" || group === "project_lead"
-    ? group
-    : undefined;
-}
-
-function issuerImageFromExcerpts(excerpts: string[]) {
-  const imageLine = excerpts.find((excerpt) => excerpt.startsWith("Issuer profile image:"));
-  const value = imageLine?.replace(/^Issuer profile image:\s*/i, "").replace(/\.$/, "").trim();
-  return value && value !== "unavailable" ? value : undefined;
-}
-
-function issuerBioFromExcerpts(excerpts: string[]) {
-  return excerpts
-    .filter((excerpt) => !/^Issuer website management biography:|^Issuer team group:|^Issuer profile image:/i.test(excerpt))
-    .join(" ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
 function issuerPeopleFromSources(sources: SourceDocument[]): ManagementPerson[] {
   return sources
     .filter((source) => source.publisher === "Issuer team page")
     .map((source): ManagementPerson | undefined => {
       const titleMatch = source.title.match(/^(.+?)\s+-\s+(.+)$/);
-      const bioLine = source.excerpts.find((excerpt) => excerpt.startsWith("Issuer website management biography:"));
-      const bioMatch = bioLine?.match(/Issuer website management biography:\s*(.+?)\s+is listed as\s+(.+?)\.$/i);
-      const name = titleMatch?.[1] ?? bioMatch?.[1];
-      const role = titleMatch?.[2] ?? bioMatch?.[2];
-      const bio = issuerBioFromExcerpts(source.excerpts);
+      const name = titleMatch?.[1];
+      const role = titleMatch?.[2];
+      const bio = source.excerpts.slice(1).join(" ").replace(/\s+/g, " ").trim() || source.excerpts[0]?.trim();
       if (!name || !role || !bio) return undefined;
       return {
         name,
         role,
         bio,
         experience: [bio],
-        group: issuerGroupFromExcerpts(source.excerpts) ?? managementGroup(role),
+        group: source.managementGroup ?? managementGroup(role),
         sourceUrl: source.url,
         sourceStatus: "issuer",
-        profileImageUrl: issuerImageFromExcerpts(source.excerpts),
+        profileImageUrl: source.imageUrl,
         trackRecord: /discover|mine|build|financ|capital|transaction|acquisition|acquired|deposit|development|operation|project/i.test(bio)
           ? [bio]
           : [],
@@ -1467,8 +1430,13 @@ function buildManagementEvidence(
   sources: SourceDocument[],
   facts: EvidenceFact[] = []
 ): ManagementEvidence {
-  const seededPeople = company.management?.length
-    ? company.management
+  const registryContext = company.management?.length
+    ? company.management.map((person) => ({
+        ...person,
+        sourceStatus: "unknown" as const,
+        evidenceIds: [] as string[],
+        trackRecord: [] as string[]
+      }))
     : [
         {
           name: "Management team",
@@ -1484,30 +1452,22 @@ function buildManagementEvidence(
       ];
   const issuerPeople = issuerPeopleFromSources(sources);
   const registryPeople =
-    issuerPeople.length && seededPeople.length === 1 && seededPeople[0].name === "Management team"
+    issuerPeople.length && registryContext.length === 1 && registryContext[0].name === "Management team"
       ? issuerPeople
-      : mergeManagementPeople(seededPeople, issuerPeople);
+      : mergeManagementPeople(registryContext, issuerPeople);
 
-  const managementSources = sources.filter((source) =>
-    /management|leadership|executive|director|board|governance|technical team|qualified person|advisor|profile/i.test(
-      `${source.title} ${source.publisher} ${source.excerpts.join(" ")}`
-    )
+  const managementSources = sources.filter(
+    (source) =>
+      source.publisher === "Issuer team page" ||
+      /management|leadership|executive|director|board|governance|technical team|qualified person|advisor|profile/i.test(
+        `${source.title} ${source.publisher} ${source.excerpts.join(" ")}`
+      )
   );
   const factSources = facts.filter((fact) =>
     ["management_biography", "prior_outcomes", "capital_allocation", "insider_ownership"].includes(fact.category)
   );
 
   const personSources: ManagementEvidence["sources"] = [
-    ...registryPeople.map((person) => ({
-      id: `management-registry-${slug(company.id)}-${slug(person.name)}`,
-      personName: person.name,
-      title: `${person.name} - ${person.role}`,
-      url: person.sourceUrl ?? company.websiteUrl ?? (company.country === "US" ? "https://www.sec.gov/search-filings" : "https://www.sedarplus.ca/"),
-      publisher: person.sourceUrl ? "Issuer or filing profile" : "Company registry",
-      sourceType: "manual" as const,
-      excerpt: `${person.name} is listed as ${person.role}. ${person.bio}`,
-      confidence: person.sourceUrl ? ("medium" as const) : ("low" as const)
-    })),
     ...managementSources.map((source) => ({
       id: source.id,
       title: source.title,
@@ -1529,7 +1489,7 @@ function buildManagementEvidence(
   ];
 
   const people = registryPeople.map((person) => {
-    const isPlaceholder = person.name === "Management team";
+    const isGenericRosterEntry = person.name === "Management team";
     const evidenceIds = personSources
       .filter((source) => {
         const name = person.name.toLowerCase();
@@ -1537,14 +1497,18 @@ function buildManagementEvidence(
         return source.title.toLowerCase().includes(name) || source.excerpt.toLowerCase().includes(name);
       })
       .map((source) => source.id);
-    const trackRecord = isPlaceholder
+    const matchingSources = personSources.filter((source) => evidenceIds.includes(source.id));
+    const trackRecord = isGenericRosterEntry || evidenceIds.length === 0
       ? []
       : person.experience.filter((item) => /discover|mine|build|financ|capital|transaction|deposit|development|operation|project/i.test(item));
-    const discoveredLinkedInUrl = person.linkedInUrl ?? linkedInUrlFromSources(person, personSources);
+    const sourcedLinkedInUrl = linkedInUrlFromSources(person, personSources);
+    const discoveredLinkedInUrl = sourcedLinkedInUrl ?? person.linkedInUrl;
     return {
       ...person,
       group: person.group ?? managementGroup(person.role),
-      sourceStatus: person.sourceStatus ?? managementSourceStatus(person),
+      sourceStatus: evidenceIds.length ? managementSourceStatusFromEvidence(matchingSources) : "unknown",
+      sourceUrl: evidenceIds.length ? person.sourceUrl : undefined,
+      profileImageUrl: evidenceIds.length ? person.profileImageUrl : undefined,
       linkedInUrl: discoveredLinkedInUrl,
       linkedInStatus: linkedInStatusFromSources(person, discoveredLinkedInUrl, personSources),
       evidenceIds,
@@ -1590,7 +1554,7 @@ function buildManagementEvidence(
   const gaps = [
     people.length <= 1 || roleCoverage.covered < 2 ? "Full executive, board, technical, advisor, and project-lead roster still needs discovery." : undefined,
     !hasSourcedRoster ? "Roster needs issuer, filing, or circular evidence before confidence can rise above low." : undefined,
-    usableLinkedInCount === 0 ? "No verified or likely LinkedIn profiles are available for this run." : undefined,
+    usableLinkedInCount === 0 ? "No source-supported or discovered public profile links are available for this run." : undefined,
     priorOutcomes.status !== "positive" ? "Prior discoveries, mine builds, financings, and public-company outcomes need more cited support." : undefined,
     technicalCredibility.status === "gap" ? "Technical credentials, qualified-person evidence, or directly relevant project-stage experience needs support." : undefined,
     capitalAllocation.status !== "positive" ? "Insider ownership, option grants, and financing/capital-allocation history are not yet independently sourced." : undefined
@@ -1620,9 +1584,9 @@ function buildManagementEvidence(
     },
     {
       id: "verified-profiles",
-      label: "LinkedIn profile coverage",
+      label: "Public profile link coverage",
       status: verifiedLinkedInCount && hasSourcedRoster ? ("positive" as const) : likelyLinkedInCount || verifiedLinkedInCount ? ("watch" as const) : ("gap" as const),
-      detail: `${verifiedLinkedInCount} verified and ${likelyLinkedInCount} likely LinkedIn/public profile${usableLinkedInCount === 1 ? "" : "s"} are available.`,
+      detail: `${verifiedLinkedInCount} source-supported and ${likelyLinkedInCount} discovered public profile link${usableLinkedInCount === 1 ? "" : "s"} are available.`,
       sourceIds: linkedInCandidates.flatMap((candidate) => candidate.sourceIds)
     },
     {
@@ -1650,14 +1614,15 @@ function buildManagementEvidence(
     gaps,
     summary:
       people.length && personSources.length
-        ? `${company.name}'s management read is based on ${people.length} structured profile${people.length === 1 ? "" : "s"}, ${trackRecord.length} track-record signal${trackRecord.length === 1 ? "" : "s"}, ${verifiedLinkedInCount} verified LinkedIn/public profile${verifiedLinkedInCount === 1 ? "" : "s"}, and ${likelyLinkedInCount} likely profile${likelyLinkedInCount === 1 ? "" : "s"}.`
-        : "Management quality remains a key diligence item. The app could not verify a complete roster, LinkedIn profile set, insider alignment, or prior outcomes from current evidence."
+        ? `${company.name}'s management read is based on ${people.length} structured profile${people.length === 1 ? "" : "s"}, ${trackRecord.length} track-record signal${trackRecord.length === 1 ? "" : "s"}, ${verifiedLinkedInCount} source-supported public profile link${verifiedLinkedInCount === 1 ? "" : "s"}, and ${likelyLinkedInCount} discovered profile link${likelyLinkedInCount === 1 ? "" : "s"}.`
+        : "Management quality remains a key diligence item. The app could not establish a complete sourced roster, public profile-link set, insider alignment, or prior outcomes from current evidence."
   };
 }
 
 function managementEvidenceScore(evidence: ManagementEvidence) {
   const roleCoverage = managementRoleCoverage(evidence.people);
   const hasSourcedRoster = hasIssuerOrFilingRosterEvidence(evidence);
+  if (!hasSourcedRoster) return 30;
   const technicalCredibility = managementTechnicalCredibility(evidence);
   const priorOutcomes = managementPriorOutcomeStrength(evidence);
   const capitalAllocation = managementCapitalAllocationStrength(evidence);
@@ -1666,7 +1631,7 @@ function managementEvidenceScore(evidence: ManagementEvidence) {
   const technicalScore = technicalCredibility.status === "positive" ? 12 : technicalCredibility.status === "watch" ? 5 : 0;
   const linkedInScore = Math.min(
     6,
-    (hasSourcedRoster ? evidence.linkedInCandidates.filter((candidate) => candidate.status === "verified").length * 3 : 0) +
+    evidence.linkedInCandidates.filter((candidate) => candidate.status === "verified").length * 3 +
       evidence.linkedInCandidates.filter((candidate) => candidate.status === "likely_match").length
   );
   const trackRecordScore = Math.min(16, priorOutcomes.highQualityCount * 5 + Math.max(0, priorOutcomes.count - priorOutcomes.highQualityCount) * 2);
@@ -1750,7 +1715,7 @@ function fallbackShareStructure(company: CompanyCandidate, marketSnapshot: Marke
       strategicOwnership: undefined,
       floatQuality:
         marketSnapshot.status === "sourced"
-          ? "Shares outstanding can be seeded from market data, but float, insider, strategic, warrant, option, and fully diluted figures still need ownership-specific sourcing."
+          ? "Shares outstanding can be populated from market data, but float, insider, strategic, warrant, option, and fully diluted figures still need ownership-specific sourcing."
           : "Unknown until current share count, insider ownership, strategic holders, warrants, options, and recent financing terms are ingested.",
       notes: [
         "Use Yahoo Finance market data where available, then reconcile with filings before relying on ownership figures.",

@@ -38,18 +38,18 @@ flowchart TB
         direction LR
         subgraph L4["DATA + EVIDENCE SOURCES"]
             direction LR
-            S1[("Evidence foundation<br/>Seeded company information<br/>SEC + SEDAR+ discovery")]
-            S2[("Issuer collection<br/>Issuer crawler / Playwright management + news<br/>Newswire / RSS discovery")]
-            S3[("Manual issuer evidence<br/>normalized separately; appended after collection<br/>bypasses automated extraction/audit")]
-            S4[("Yahoo Finance / YFinance<br/>market data / financials / analyst targets / ownership")]
+            S1[("Optional regulatory research<br/>Configured SEC filing retrieval<br/>SEDAR+ manual disclosure reference")]
+            S2[("Bounded issuer collection<br/>Playwright/fetch management + news pages<br/>GlobeNewswire RSS when available")]
+            S3[("User-supplied issuer evidence<br/>normalized separately; appended after collection<br/>requires source URL + excerpts")]
+            S4[("Yahoo Finance / YFinance<br/>best-effort, non-filing-backed market data<br/>missing fields remain unavailable")]
             W4 --> S1
             S1 ~~~ S2 ~~~ S3 ~~~ S4
         end
         subgraph L3["RESEARCH OPERATIONS"]
             direction LR
-            O1["⚙ Automated evidence collection"]
+            O1["⚙ Automated live evidence collection<br/>no fixed or seeded sources"]
             O2["⚙ Market + financial collection<br/>freshness + alternate-listing reconciliation"]
-            O3["⚙ Source deduplication / fact extraction<br/>coverage + missing-data audit"]
+            O3["⚙ Accept retrieved documents/excerpts only<br/>deduplicate / extract facts / preserve gaps"]
             O4["⚙ Research + scoring engine<br/>evidence-adjusted confidence<br/>preserve unknown / missing facts"]
             O5["In-memory session report store"]
             S1 -.-> O1

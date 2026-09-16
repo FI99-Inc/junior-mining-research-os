@@ -5,8 +5,21 @@ import { createResearchRun } from "../src/domain/researchEngine";
 import { collectEvidence } from "../src/domain/evidencePipeline";
 import { collectMarketData } from "../src/domain/sourceAdapters";
 import type { SourceDocument, SourceType } from "../src/domain/types";
+import { createDemoResearchRun, DEMO_NOTICE, resolveDemoCompany, searchDemoCompanies } from "./demoFixture";
 
 const allowedSourceTypes: SourceType[] = ["filing", "presentation", "news", "market_data", "regulatory_search", "manual"];
+
+function isEnabledEnvironmentFlag(value: string | undefined) {
+  return /^(1|true|yes)$/i.test(value?.trim() ?? "");
+}
+
+function isHttpUrl(value: string) {
+  try {
+    return ["http:", "https:"].includes(new URL(value).protocol);
+  } catch {
+    return false;
+  }
+}
 
 const handleJsonError: ErrorRequestHandler = (error, _req, res, next) => {
   if (error?.type === "entity.too.large" && error?.status === 413) {
@@ -32,7 +45,7 @@ function normalizeManualSources(value: unknown): SourceDocument[] {
       const raw = item as Record<string, unknown>;
       const title = String(raw.title ?? "").trim();
       const publisher = String(raw.publisher ?? "Issuer document import").trim() || "Issuer document import";
-      const url = String(raw.url ?? "").trim() || "Manual source";
+      const url = String(raw.url ?? "").trim();
       const sourceType = allowedSourceTypes.includes(raw.sourceType as SourceType) ? (raw.sourceType as SourceType) : "manual";
       const excerpts = Array.isArray(raw.excerpts)
         ? raw.excerpts.map((excerpt) => String(excerpt).trim()).filter(Boolean)
@@ -41,7 +54,7 @@ function normalizeManualSources(value: unknown): SourceDocument[] {
             .map((excerpt) => excerpt.trim())
             .filter(Boolean);
 
-      if (!title || excerpts.length === 0) return undefined;
+      if (!title || !isHttpUrl(url) || excerpts.length === 0) return undefined;
       return {
         id: `manual-${Date.now()}-${index}`,
         title,
@@ -55,19 +68,21 @@ function normalizeManualSources(value: unknown): SourceDocument[] {
     .filter((source): source is SourceDocument => Boolean(source));
 }
 
-export function createApp() {
+export function createApp(options: { demoMode?: boolean } = {}) {
   const app = express();
   const store = createReportStore();
+  const demoMode = options.demoMode ?? process.env.DEMO_MODE === "1";
 
   app.use(express.json());
   app.use(handleJsonError);
 
   app.get("/api/health", (_req, res) => {
-    res.json({ status: "ok" });
+    res.json(demoMode ? { status: "ok", mode: "demo", demoNotice: DEMO_NOTICE } : { status: "ok", mode: "live" });
   });
 
   app.get("/api/companies", (req, res) => {
-    res.json(searchCompanies(String(req.query.q ?? "")));
+    const query = String(req.query.q ?? "");
+    res.json(demoMode ? searchDemoCompanies(query) : searchCompanies(query));
   });
 
   app.get("/api/research-runs", (_req, res) => {
@@ -80,15 +95,26 @@ export function createApp() {
       return;
     }
     const query = req.body.query.trim();
-    const company = resolveCompany(query);
+    const company = demoMode ? resolveDemoCompany(query) : resolveCompany(query);
     if (!company) {
-      res.status(404).json({ error: "Company not found in the V1 Canada/US junior-mining universe." });
+      res.status(404).json({ error: demoMode ? "Company not found in the fictional demo universe." : "Company not found in the V1 Canada/US junior-mining universe." });
+      return;
+    }
+
+    if (demoMode) {
+      const run = createDemoResearchRun();
+      store.save(run);
+      res.json(run);
       return;
     }
 
     const manualSources = normalizeManualSources(req.body?.manualSources);
     const [evidence, { marketSnapshot, supplemental }] = await Promise.all([
-      collectEvidence(company),
+      collectEvidence(company, {
+        secUserAgent: process.env.SEC_USER_AGENT,
+        renderedCrawling: !isEnabledEnvironmentFlag(process.env.DISABLE_RENDERED_CRAWLING),
+        browserExecutablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
+      }),
       collectMarketData(company)
     ]);
     const run = createResearchRun(

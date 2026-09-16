@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createResearchRun } from "../src/domain/researchEngine";
-import { collectSources } from "../src/domain/sourceAdapters";
+import { sourceAdapterStatuses } from "../src/domain/sourceAdapters";
 import type { CompanyCandidate, EvidenceFact, SourceDocument } from "../src/domain/types";
 
 const candidate: CompanyCandidate = {
@@ -213,25 +213,26 @@ describe("createResearchRun", () => {
       ])
     );
     expect(run.shareStructure.floatQuality).toBeTruthy();
-    expect(run.investorLenses.map((lens) => lens.name)).toEqual(["Rick Rule", "Eric Sprott", "Marin Katusa"]);
-    expect(run.investorLenses[0].initials).toBe("RR");
-    expect(run.investorLenses[0].portraitTone).toBeTruthy();
-    expect(run.investorLenses[0].portraitUrl).toContain("rick-rule");
-    expect(run.investorLenses.find((lens) => lens.name === "Eric Sprott")?.portraitUrl).toContain("eric-sprott");
+    expect(run.investorLenses.map((lens) => lens.name)).toEqual([
+      "Contrarian and downside-survival lens",
+      "Discovery and sponsorship lens",
+      "Macro, jurisdiction, and capital-scarcity lens"
+    ]);
+    expect(run.investorLenses[0].initials).toBe("CD");
+    expect(run.investorLenses[0].visualTone).toBeTruthy();
+    expect(JSON.stringify(run.investorLenses)).not.toMatch(/Rick Rule|Eric Sprott|Marin Katusa|\/investors\//i);
     expect(run.investorLenses[0].approach).toContain("optionality");
     expect(run.investorLenses[0].metrics).toEqual(expect.arrayContaining([expect.stringContaining("Investment Quality")]));
     expect(run.investorLenses[0].background).toContain("resource");
     expect(run.investorLenses[0].checklist).toEqual(expect.arrayContaining([expect.stringContaining("management")]));
-    expect(run.investorLenses[0].sourceLinks).toEqual(
-      expect.arrayContaining([expect.objectContaining({ url: expect.stringContaining("ruleinvestmentmedia") })])
-    );
-    expect(run.investorLenses.find((lens) => lens.name === "Eric Sprott")?.checklist).toEqual(
+    expect(run.investorLenses[0].sourceLinks).toEqual([]);
+    expect(run.investorLenses.find((lens) => lens.name === "Discovery and sponsorship lens")?.checklist).toEqual(
       expect.arrayContaining([expect.stringContaining("insider")])
     );
-    expect(run.investorLenses.find((lens) => lens.name === "Marin Katusa")?.checklist).toEqual(
+    expect(run.investorLenses.find((lens) => lens.name === "Macro, jurisdiction, and capital-scarcity lens")?.checklist).toEqual(
       expect.arrayContaining([expect.stringContaining("macro")])
     );
-    expect(run.investorLenses[0].disclaimer).toContain("synthesized analytical lens");
+    expect(run.investorLenses[0].disclaimer).toContain("independent analytical framework");
     expect(run.analystForecast.status).toBe("not_sourced");
     expect(run.analystForecast.consensusLabel).toBe("Forecast unavailable in current data");
     expect(run.analystForecast.summary).not.toContain("No sourced analyst forecast");
@@ -264,7 +265,7 @@ describe("createResearchRun", () => {
     expect(run.sources).toHaveLength(0);
   });
 
-  it("marks LinkedIn-only management candidates as likely matches without exposing match details", () => {
+  it("marks sourced public-profile candidates as likely matches without exposing match details", () => {
     const run = createResearchRun(
       {
         ...candidate,
@@ -278,7 +279,17 @@ describe("createResearchRun", () => {
           }
         ]
       },
-      [],
+      [
+        {
+          id: "public-profile-tim-smith",
+          title: "Tim Smith public profile candidate",
+          sourceType: "manual",
+          publisher: "Public profile search",
+          url: "https://www.linkedin.com/in/timsmith",
+          retrievedAt: "2026-07-04T12:00:00.000Z",
+          excerpts: ["Tim Smith Chief Executive Officer mining executive profile"]
+        }
+      ],
       "USGO"
     );
 
@@ -338,11 +349,11 @@ describe("createResearchRun", () => {
           url: "https://www.usgoldmining.us/company/management",
           retrievedAt: "2026-07-04T12:00:00.000Z",
           excerpts: [
-            "Issuer website management biography: Jane Doe is listed as Vice President, Exploration.",
-            "Issuer team group: technical.",
-            "Issuer profile image: https://www.usgoldmining.us/jane.jpg.",
+            "Jane Doe Vice President, Exploration",
             "Jane Doe is a geologist with discovery, mine development, acquisition, and public-company financing experience."
-          ]
+          ],
+          imageUrl: "https://www.usgoldmining.us/jane.jpg",
+          managementGroup: "technical"
         }
       ],
       "USGO"
@@ -397,11 +408,10 @@ describe("createResearchRun", () => {
           url: "https://www.usgoldmining.us/company/management",
           retrievedAt: "2026-07-04T12:00:00.000Z",
           excerpts: [
-            "Issuer website management biography: Tim Smith is listed as President and Chief Executive Officer.",
-            "Issuer team group: executive.",
-            "Issuer profile image: unavailable.",
+            "Tim Smith President and Chief Executive Officer",
             "Tim Smith has led mining exploration projects, public-company financings, and project development programs."
-          ]
+          ],
+          managementGroup: "executive"
         }
       ],
       "USGO"
@@ -413,7 +423,7 @@ describe("createResearchRun", () => {
       expect.objectContaining({
         sourceStatus: "issuer",
         sourceUrl: "https://www.usgoldmining.us/company/management",
-        linkedInStatus: "likely_match",
+        linkedInStatus: "needs_review",
         bio: expect.stringContaining("public-company financings")
       })
     );
@@ -511,6 +521,24 @@ describe("createResearchRun", () => {
       managementRichCompany,
       [
         ...richConfidenceSources,
+        ...managementRichCompany.management!.map((person, index) => ({
+          id: `issuer-team-rich-${index}`,
+          title: `${person.name} - ${person.role}`,
+          sourceType: "manual" as const,
+          publisher: "Issuer team page",
+          url: "https://example.com/team",
+          retrievedAt: "2026-07-05T12:00:00.000Z",
+          excerpts: [`${person.name} ${person.role}`, person.bio]
+        })),
+        {
+          id: "issuer-linkedin-alex-builder",
+          title: "Alex Builder public profile",
+          sourceType: "manual",
+          publisher: "Issuer profile link",
+          url: "https://www.linkedin.com/in/alexbuilder",
+          retrievedAt: "2026-07-05T12:00:00.000Z",
+          excerpts: ["Alex Builder Chief Executive Officer mining"]
+        },
         {
           id: "proxy-management",
           title: "Management information circular",
@@ -541,7 +569,7 @@ describe("createResearchRun", () => {
     );
   });
 
-  it("does not let LinkedIn-only profiles create a strong management score", () => {
+  it("does not let registry-only LinkedIn profiles create a strong management score", () => {
     const run = createResearchRun(
       {
         ...candidate,
@@ -569,20 +597,17 @@ describe("createResearchRun", () => {
     const management = run.scorecard.categories.find((item) => item.key === "management");
     expect(management?.score).toBeLessThanOrEqual(55);
     expect(management?.confidence).toBe("low");
-    expect(run.managementEvidence.confidenceSignals.find((signal) => signal.id === "verified-profiles")?.status).toBe("watch");
+    expect(run.managementEvidence.confidenceSignals.find((signal) => signal.id === "verified-profiles")?.status).toBe("gap");
     expect(run.managementEvidence.gaps).toEqual(expect.arrayContaining([expect.stringContaining("issuer, filing, or circular evidence")]));
   });
 
-  it("describes source adapter contributions and missing data", () => {
-    const collected = collectSources(candidate);
+  it("keeps static adapter context limited to configured market data and manual import", () => {
+    const adapters = sourceAdapterStatuses(candidate);
 
-    expect(collected.adapters).toEqual(
+    expect(adapters.some((adapter) => adapter.id === "sec-edgar")).toBe(false);
+    expect(adapters.some((adapter) => adapter.id === "sedar-plus")).toBe(false);
+    expect(adapters).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({
-          id: "sec-edgar",
-          contributes: expect.arrayContaining([expect.stringContaining("filing")]),
-          missing: expect.arrayContaining([expect.any(String)])
-        }),
         expect.objectContaining({
           id: "market-data",
           contributes: expect.arrayContaining([expect.stringContaining("market")]),

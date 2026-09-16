@@ -7,15 +7,20 @@ import type {
   EvidenceFactCategory,
   SourceDocument
 } from "./types";
-import { collectSources } from "./sourceAdapters";
-import { existsSync } from "node:fs";
 import type { Browser } from "playwright";
+import { sourceAdapterStatuses } from "./sourceAdapters";
 
 const retrievedAt = () => new Date().toISOString();
 const SEC_TICKERS_URL = "https://www.sec.gov/files/company_tickers.json";
 const SEC_SUBMISSIONS_URL = (cik: string) => `https://data.sec.gov/submissions/CIK${cik}.json`;
-const SEDAR_SEARCH_URL = "https://www.sedarplus.ca/";
 const GLOBENEWSWIRE_RSS_URL = "https://www.globenewswire.com/rss/news-releases.xml";
+const SEC_DEFAULT_REQUEST_INTERVAL_MS = 125;
+const MAX_TEAM_PAGES = 12;
+const MAX_NEWS_DISCOVERY_PAGES = 8;
+const MAX_NEWS_ARTICLES = 8;
+const MAX_NEWSWIRE_ITEMS = 6;
+const RESEARCH_CLIENT_IDENTIFIER = "Junior-Mining-Research-OS/0.1.0";
+const RETRYABLE_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504]);
 
 const CATEGORY_LABELS: Record<EvidenceFactCategory, string> = {
   technical_report: "Technical report / project disclosure",
@@ -67,9 +72,14 @@ export interface EvidenceCollectionResult {
 interface EvidenceOptions {
   fetcher?: typeof fetch;
   browserFetcher?: BrowserPageFetcher;
+  renderedCrawling?: boolean;
+  browserExecutablePath?: string;
   fetchTimeoutMs?: number;
   signal?: AbortSignal;
   now?: () => string;
+  secUserAgent?: string;
+  secRequestIntervalMs?: number;
+  sleep?: (milliseconds: number) => Promise<void>;
 }
 
 type Fetcher = typeof fetch;
@@ -84,6 +94,83 @@ export function createTimeoutFetcher(fetcher: Fetcher, timeoutMs = 8000, signal?
     combined.throwIfAborted();
     return fetcher(input, { ...init, signal: combined });
   };
+}
+
+const defaultSleep = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
+
+function isValidSecUserAgent(value: string | undefined) {
+  return Boolean(value?.trim().match(/^\S(?:.*\S)?\s+[^\s@]+@[^\s@]+\.[^\s@]+$/));
+}
+
+function retryDelay(response: Response | undefined, attempt: number) {
+  const retryAfter = response?.headers.get("Retry-After");
+  if (retryAfter) {
+    const seconds = Number(retryAfter);
+    if (Number.isFinite(seconds)) return Math.min(Math.max(seconds * 1000, 0), 5000);
+    const dateDelay = Date.parse(retryAfter) - Date.now();
+    if (Number.isFinite(dateDelay)) return Math.min(Math.max(dateDelay, 0), 5000);
+  }
+  return Math.min(250 * 2 ** attempt, 2000);
+}
+
+async function fetchWithRetry(
+  fetcher: Fetcher,
+  input: RequestInfo | URL,
+  init: RequestInit | undefined,
+  options: {
+    attempts: number;
+    sleep: (milliseconds: number) => Promise<void>;
+    beforeAttempt?: () => Promise<void>;
+  }
+) {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < options.attempts; attempt += 1) {
+    await options.beforeAttempt?.();
+    try {
+      const response = await fetcher(input, init);
+      if (!RETRYABLE_STATUS_CODES.has(response.status) || attempt === options.attempts - 1) return response;
+      await response.body?.cancel().catch(() => undefined);
+      await options.sleep(retryDelay(response, attempt));
+    } catch (error) {
+      lastError = error;
+      if (init?.signal?.aborted || attempt === options.attempts - 1) throw error;
+      await options.sleep(retryDelay(undefined, attempt));
+    }
+  }
+  throw lastError;
+}
+
+let secRequestQueue = Promise.resolve();
+let lastSecRequestStartedAt = 0;
+
+async function waitForSecRequestSlot(intervalMs: number, sleep: (milliseconds: number) => Promise<void>) {
+  let release: () => void = () => undefined;
+  const previous = secRequestQueue;
+  secRequestQueue = new Promise<void>((resolve) => { release = resolve; });
+  await previous;
+  try {
+    const waitMs = Math.max(0, lastSecRequestStartedAt + intervalMs - Date.now());
+    if (waitMs) await sleep(waitMs);
+    lastSecRequestStartedAt = Date.now();
+  } finally {
+    release();
+  }
+}
+
+function externalFailureNote(provider: string, error: unknown) {
+  if (error instanceof DOMException && error.name === "TimeoutError") {
+    return `${provider} timed out during this run.`;
+  }
+  const httpStatus = error instanceof Error ? error.message.match(/HTTP (\d{3})/i)?.[1] : undefined;
+  if (httpStatus) {
+    return `${provider} returned HTTP ${httpStatus} during this run.`;
+  }
+  return `${provider} was blocked or unavailable during this run.`;
+}
+
+function requireSuccessfulResponse(response: Response, provider: string) {
+  if (!response.ok) throw new Error(`${provider} returned HTTP ${response.status}`);
+  return response;
 }
 
 export interface BrowserPageResult {
@@ -185,17 +272,29 @@ function browserUnavailable() {
   return typeof process !== "undefined" && process.env.NODE_ENV === "test";
 }
 
-export function createPlaywrightBrowserFetcher(): BrowserPageFetcher | undefined {
-  if (browserUnavailable()) return undefined;
+export interface PlaywrightBrowserOptions {
+  enabled?: boolean;
+  executablePath?: string;
+}
+
+function playwrightFailureMessage(error: unknown) {
+  const message = error instanceof Error ? error.message : "Playwright page fetch failed";
+  if (/executable.*(?:doesn't exist|not found)|browser.*(?:missing|not found)|chromium.*(?:missing|not installed)/i.test(message)) {
+    return "Playwright Chromium is unavailable. Run `pnpm exec playwright install chromium` or set PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH to a Chromium-compatible executable. Plain-fetch fallback will be used.";
+  }
+  return `Rendered browser collection failed: ${message}. Plain-fetch fallback will be used.`;
+}
+
+export function createPlaywrightBrowserFetcher(options: PlaywrightBrowserOptions = {}): BrowserPageFetcher | undefined {
+  if (options.enabled === false || browserUnavailable()) return undefined;
 
   let browserPromise: Promise<Browser> | undefined;
 
   async function getBrowser() {
     if (!browserPromise) {
       browserPromise = import("playwright").then(async ({ chromium }) => {
-        const chromePath = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
-        const launchOptions = existsSync(chromePath) ? { headless: true, executablePath: chromePath } : { headless: true };
-        return chromium.launch(launchOptions);
+        const executablePath = options.executablePath?.trim();
+        return chromium.launch(executablePath ? { headless: true, executablePath } : { headless: true });
       });
     }
     return browserPromise;
@@ -206,8 +305,7 @@ export function createPlaywrightBrowserFetcher(): BrowserPageFetcher | undefined
     try {
       const browser = await getBrowser();
       const context = await browser.newContext({
-        userAgent:
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36"
+        extraHTTPHeaders: { "X-Research-Client": RESEARCH_CLIENT_IDENTIFIER }
       });
       try {
         const page = await context.newPage();
@@ -247,7 +345,7 @@ export function createPlaywrightBrowserFetcher(): BrowserPageFetcher | undefined
         links: [],
         mode: "playwright" as const,
         ok: false,
-        error: error instanceof Error ? error.message : "Playwright page fetch failed"
+        error: playwrightFailureMessage(error)
       };
     }
   };
@@ -271,7 +369,6 @@ interface IssuerTeamPerson {
 
 const TEAM_LINK_PATTERN =
   /technical|report|presentation|investor|news|drill|resource|sedar|pdf|corporate|about|management|leadership|team|board|governance|advisor|director|executive|linkedin\.com\/in/i;
-const MANAGEMENT_LINK_PATTERN = /corporate|about|management|leadership|team|board|governance|advisor|director|executive/i;
 const NEWS_LINK_PATTERN =
   /news|press|release|media|announces?|drill|results?|financing|private placement|resource|permit|metallurg|update|corporate update/i;
 const NEWS_ARTICLE_ACTION_PATTERN =
@@ -570,21 +667,64 @@ export function extractIssuerTeamPeople(pageHtml: string, sourceUrl: string, sec
   }).slice(0, 24);
 }
 
-async function collectSecEvidence(company: CompanyCandidate, fetcher: Fetcher, now: string): Promise<AdapterEvidenceResult> {
+function excerptsFromRetrievedDocument(rawDocument: string) {
+  const text = stripTags(rawDocument).replace(/\s+/g, " ").trim();
+  if (text.length < 20) return [];
+  const sentences = text.split(/(?<=[.!?])\s+/).map((sentence) => sentence.trim()).filter(Boolean);
+  const relevant = sentences.filter((sentence) => FACT_PATTERNS.some((factPattern) => factPattern.pattern.test(sentence)));
+  return (relevant.length ? relevant : sentences).slice(0, 6).map((sentence) => sentence.slice(0, 900));
+}
+
+async function collectSecEvidence(
+  company: CompanyCandidate,
+  fetcher: Fetcher,
+  now: string,
+  options: Pick<EvidenceOptions, "secUserAgent" | "secRequestIntervalMs" | "sleep">
+): Promise<AdapterEvidenceResult> {
   const sources: SourceDocument[] = [];
   const adapters: AdapterStatus[] = [];
+  let filingDocumentsRead = 0;
+  let filingDocumentFailures = 0;
   if (company.country !== "US") return { sources, adapters };
+  if (!isValidSecUserAgent(options.secUserAgent)) {
+    return {
+      sources,
+      adapters: [
+        {
+          id: "sec-edgar-live",
+          name: "SEC EDGAR filing retrieval",
+          status: "needs_configuration",
+          note: "SEC requests were skipped because SEC_USER_AGENT must contain an application name and contact email address.",
+          contributes: ["official U.S. filing retrieval when configured"],
+          missing: ["SEC_USER_AGENT", "CIK resolution", "recent filing documents"]
+        }
+      ]
+    };
+  }
+
+  const sleep = options.sleep ?? defaultSleep;
+  const intervalMs = options.secRequestIntervalMs ?? SEC_DEFAULT_REQUEST_INTERVAL_MS;
+  const secFetcher: Fetcher = (input, init) => fetchWithRetry(fetcher, input, {
+    ...init,
+    headers: {
+      Accept: "application/json, text/html;q=0.9, */*;q=0.8",
+      ...Object.fromEntries(new Headers(init?.headers).entries()),
+      "User-Agent": options.secUserAgent!
+    }
+  }, {
+    attempts: 3,
+    sleep,
+    beforeAttempt: () => waitForSecRequestSlot(intervalMs, sleep)
+  });
 
   try {
-    const tickersResponse = await fetcher(SEC_TICKERS_URL);
-    if (!tickersResponse.ok) throw new Error("SEC ticker lookup failed");
+    const tickersResponse = requireSuccessfulResponse(await secFetcher(SEC_TICKERS_URL), "SEC ticker lookup");
     const tickers = (await tickersResponse.json()) as Record<string, { cik_str?: number; ticker?: string; title?: string }>;
     const match = Object.values(tickers).find((item) => item.ticker?.toUpperCase() === company.ticker.toUpperCase());
     if (!match?.cik_str) throw new Error("CIK not found");
     const cik = String(match.cik_str).padStart(10, "0");
     const submissionsUrl = SEC_SUBMISSIONS_URL(cik);
-    const submissionsResponse = await fetcher(submissionsUrl);
-    if (!submissionsResponse.ok) throw new Error("SEC submissions lookup failed");
+    const submissionsResponse = requireSuccessfulResponse(await secFetcher(submissionsUrl), "SEC submissions lookup");
     const submissions = (await submissionsResponse.json()) as {
       filings?: { recent?: { accessionNumber?: string[]; primaryDocument?: string[]; form?: string[]; filingDate?: string[] } };
     };
@@ -594,42 +734,53 @@ async function collectSecEvidence(company: CompanyCandidate, fetcher: Fetcher, n
     const documents = recent?.primaryDocument ?? [];
     const filingDates = recent?.filingDate ?? [];
 
-    forms.slice(0, 8).forEach((form, index) => {
+    for (const [index, form] of forms.slice(0, 8).entries()) {
       const accession = accessions[index];
       const document = documents[index];
-      if (!accession || !document) return;
+      if (!accession || !document) continue;
       const accessionPath = accession.replace(/-/g, "");
       const url = `https://www.sec.gov/Archives/edgar/data/${Number(match.cik_str)}/${accessionPath}/${document}`;
-      const source: SourceDocument = {
+      let excerpts: string[] = [];
+      try {
+        const documentResponse = await secFetcher(url);
+        if (documentResponse.ok) {
+          filingDocumentsRead += 1;
+          excerpts = excerptsFromRetrievedDocument(await safeText(documentResponse));
+        } else {
+          filingDocumentFailures += 1;
+        }
+      } catch {
+        filingDocumentFailures += 1;
+        excerpts = [];
+      }
+      if (!excerpts.length) continue;
+      sources.push({
         id: `sec-${company.id}-${slug(form)}-${index}`,
         title: `${form} filing${filingDates[index] ? ` filed ${filingDates[index]}` : ""}`,
         sourceType: "filing",
         publisher: form === "4" || form === "3" || form === "5" ? "SEC EDGAR Insider Ownership" : "SEC EDGAR",
         url,
         retrievedAt: now,
-        excerpts: [
-          `${form} filing discovered through SEC EDGAR for ${company.name}.`,
-          form === "4" || form === "3" || form === "5"
-            ? "SEC Forms 3, 4, and 5 provide insider ownership and transaction evidence when available."
-            : "SEC annual, quarterly, and current filings can support cash, share structure, risk, and technical disclosure review."
-        ]
-      };
-      sources.push(source);
-    });
+        excerpts
+      });
+    }
     adapters.push({
       id: "sec-edgar-live",
-      name: "SEC EDGAR automated discovery",
+      name: "SEC EDGAR filing retrieval",
       status: "configured",
-      note: "Resolved CIK and discovered recent SEC filings through official SEC endpoints.",
-      contributes: ["CIK resolution", "recent filing URLs", "insider ownership forms when present"],
-      missing: ["full filing text extraction", "S-K 1300 table parsing"]
+      note: `Resolved CIK, read ${filingDocumentsRead} recent SEC filing document${filingDocumentsRead === 1 ? "" : "s"}, and retained ${sources.length} with relevant excerpts.`,
+      contributes: ["CIK resolution", "retrieved filing documents", "insider filing documents when available"],
+      missing: [
+        ...(sources.length ? ["structured filing table extraction", "S-K 1300 table parsing"] : ["retrievable filing document bodies"]),
+        ...(filingDocumentFailures ? [`${filingDocumentFailures} filing document request${filingDocumentFailures === 1 ? "" : "s"} failed`] : [])
+      ]
     });
-  } catch {
+  } catch (error) {
     adapters.push({
       id: "sec-edgar-live",
-      name: "SEC EDGAR automated discovery",
-      status: "needs_key",
-      note: "SEC discovery did not return usable live filing data for this run.",
+      name: "SEC EDGAR filing retrieval",
+      status: "unavailable",
+      note: externalFailureNote("SEC EDGAR", error),
       contributes: ["official U.S. filing discovery"],
       missing: ["CIK resolution", "recent filing URLs", "insider ownership forms"]
     });
@@ -637,59 +788,29 @@ async function collectSecEvidence(company: CompanyCandidate, fetcher: Fetcher, n
   return { sources, adapters };
 }
 
-async function collectSedarEvidence(company: CompanyCandidate, fetcher: Fetcher, now: string): Promise<AdapterEvidenceResult> {
+async function collectSedarEvidence(company: CompanyCandidate): Promise<AdapterEvidenceResult> {
   if (company.country !== "CA") return { sources: [] as SourceDocument[], adapters: [] as AdapterStatus[] };
-  try {
-    const response = await fetcher(SEDAR_SEARCH_URL);
-    if (!response.ok) throw new Error("SEDAR+ unavailable");
-    return {
-      sources: [
-        {
-          id: `sedar-${company.id}-search`,
-          title: "SEDAR+ issuer disclosure search",
-          sourceType: "regulatory_search",
-          publisher: "SEDAR+",
-          url: SEDAR_SEARCH_URL,
-          retrievedAt: now,
-          excerpts: [
-            `SEDAR+ is the official Canadian disclosure discovery path for ${company.name}.`,
-            "Search technical reports, annual filings, MD&A, financial statements, circulars, prospectuses, and material change reports."
-          ]
-        }
-      ],
-      adapters: [
-        {
-          id: "sedar-plus-live",
-          name: "SEDAR+ automated discovery",
-          status: "configured" as const,
-          note: "Recorded SEDAR+ public disclosure availability for this Canadian issuer.",
-          contributes: ["Canadian disclosure discovery", "regulatory-search provenance"],
-          missing: ["document-level SEDAR+ download", "NI 43-101 PDF parsing"]
-        }
-      ]
-    };
-  } catch {
-    return {
-      sources: [] as SourceDocument[],
-      adapters: [
-        {
-          id: "sedar-plus-live",
-          name: "SEDAR+ automated discovery",
-          status: "needs_key" as const,
-          note: "SEDAR+ direct discovery was not available through fetch; browser-assisted discovery should be used later.",
-          contributes: ["Canadian disclosure discovery path"],
-          missing: ["technical reports", "MD&A", "financial statements", "management circulars"]
-        }
-      ]
-    };
-  }
+  return {
+    sources: [],
+    adapters: [
+      {
+        id: "sedar-plus-reference",
+        name: "SEDAR+ public disclosure reference",
+        status: "manual",
+        note: "SEDAR+ is provided as a public research link only; no automated filing discovery or document retrieval ran.",
+        contributes: ["manual Canadian disclosure research path"],
+        missing: ["issuer-specific document discovery", "document-level retrieval", "NI 43-101 PDF parsing"]
+      }
+    ]
+  };
 }
 
 async function collectCompanyWebsiteEvidence(
   company: CompanyCandidate,
   fetcher: Fetcher,
   now: string,
-  browserFetcher?: BrowserPageFetcher
+  browserFetcher?: BrowserPageFetcher,
+  renderedCrawlingDisabled = false
 ): Promise<AdapterEvidenceResult> {
   if (!company.websiteUrl) return { sources: [] as SourceDocument[], adapters: [] as AdapterStatus[] };
   try {
@@ -699,6 +820,8 @@ async function collectCompanyWebsiteEvidence(
     let usedBrowser = false;
     let usedFetchFallback = false;
     let browserFailures = 0;
+    const browserFailureMessages = new Set<string>();
+    let requestFailures = 0;
 
     if (browserFetcher) {
       const browserHomepage = await browserFetcher(company.websiteUrl, { timeoutMs: 8000 });
@@ -711,12 +834,12 @@ async function collectCompanyWebsiteEvidence(
           .filter((link) => link.href);
       } else {
         browserFailures += 1;
+        if (browserHomepage.error) browserFailureMessages.add(browserHomepage.error);
       }
     }
 
     if (!homepageHtml) {
-      const response = await fetcher(company.websiteUrl);
-      if (!response.ok) throw new Error("Company website unavailable");
+      const response = requireSuccessfulResponse(await fetcher(company.websiteUrl), "Company website");
       homepageHtml = await safeText(response);
       homepageLinks = extractAnchorLinks(homepageHtml, company.websiteUrl);
       usedFetchFallback = Boolean(browserFetcher);
@@ -730,32 +853,11 @@ async function collectCompanyWebsiteEvidence(
     const homeTeamType = teamSectionType(company.websiteUrl, "Company homepage leadership scan");
     const homepageTeamLink = homeTeamType ? [{ href: company.websiteUrl, title: "Company homepage leadership scan" }] : [];
     const links = dedupeLinks([...homepageTeamLink, ...discoveredLinks, ...likelyCompanyTeamLinks(company.websiteUrl)]).slice(0, 20);
-    const sources: SourceDocument[] = links.map((link, index) => {
-      const sourceType: SourceDocument["sourceType"] = /news|drill/i.test(link.title + link.href)
-        ? "news"
-        : /presentation/i.test(link.title + link.href)
-          ? "presentation"
-          : "manual";
-      const managementHint = MANAGEMENT_LINK_PATTERN.test(link.title + link.href);
-      return {
-        id: `website-${company.id}-${index}-${slug(link.title)}`,
-        title: link.title,
-        sourceType,
-        publisher: "Company website",
-        url: link.href,
-        retrievedAt: now,
-        excerpts: [
-          `${link.title} was discovered on ${company.name}'s company website.`,
-          managementHint
-            ? `${link.title} may contain management biography, director, executive, advisor, technical team, or governance evidence.`
-            : `${link.title} may contain technical report, presentation, news, resource, drill result, permitting, or capital-structure evidence.`
-        ]
-      };
-    });
+    const sources: SourceDocument[] = [];
     const teamLinks: Array<{ href: string; title: string; sectionType: IssuerTeamGroup }> = links
       .map((link) => ({ ...link, sectionType: teamSectionType(link.href, link.title) }))
       .filter((link): link is { href: string; title: string; sectionType: IssuerTeamGroup } => Boolean(link.sectionType))
-      .slice(0, 12);
+      .slice(0, MAX_TEAM_PAGES);
     const teamPageResults: Array<{
       link: { href: string; title: string; sectionType: IssuerTeamGroup };
       people: IssuerTeamPerson[];
@@ -774,15 +876,19 @@ async function collectCompanyWebsiteEvidence(
           continue;
         }
         browserFailures += 1;
+        if (browserPage.error) browserFailureMessages.add(browserPage.error);
       }
 
       try {
         const pageResponse = await fetcher(link.href);
-        if (!pageResponse.ok) throw new Error("Team page unavailable");
+        if (!pageResponse.ok) {
+          throw new Error(`Team page returned HTTP ${pageResponse.status}`);
+        }
         const pageHtml = await safeText(pageResponse);
         usedFetchFallback = usedFetchFallback || Boolean(browserFetcher);
         teamPageResults.push({ link, people: extractIssuerTeamPeople(pageHtml, link.href, link.sectionType), mode: "fetch" });
       } catch {
+        requestFailures += 1;
         teamPageResults.push({ link, people: [] as IssuerTeamPerson[], mode: homepageMode });
       }
     }
@@ -794,25 +900,24 @@ async function collectCompanyWebsiteEvidence(
         publisher: "Issuer team page",
         url: result.link.href,
         retrievedAt: now,
-        excerpts: [
-          `Issuer website management biography: ${person.name} is listed as ${person.role}.`,
-          `Issuer team group: ${person.group}.`,
-          `Issuer website collection mode: ${result.mode === "playwright" ? "Playwright-rendered page" : "plain fetch page"}.`,
-          person.imageUrl ? `Issuer profile image: ${person.imageUrl}.` : "Issuer profile image: unavailable.",
-          person.bio
-        ]
+        excerpts: [`${person.name} ${person.role}`, person.bio],
+        imageUrl: person.imageUrl,
+        managementGroup: person.group
       }))
     ).filter((source, index, allSources) => allSources.findIndex((candidate) => candidate.title.toLowerCase() === source.title.toLowerCase()) === index);
     sources.push(...issuerTeamSources);
     const peopleFound = issuerTeamSources.length;
     const pagesFound = teamPageResults.filter((result) => result.people.length).length;
-    const collectionLabel = usedBrowser
-      ? usedFetchFallback
-        ? "Playwright-rendered issuer website search ran; fetch fallback used for unavailable pages"
-        : "Playwright-rendered issuer website search ran"
-      : usedFetchFallback
-        ? "Playwright unavailable; fetch fallback used"
-        : "Plain fetch issuer website search ran";
+    const collectionLabel = renderedCrawlingDisabled
+      ? "Rendered crawling disabled; plain fetch fallback used"
+      : usedBrowser
+        ? usedFetchFallback
+          ? "Playwright-rendered issuer website search ran; fetch fallback used for unavailable pages"
+          : "Playwright-rendered issuer website search ran"
+        : usedFetchFallback
+          ? "Playwright unavailable; fetch fallback used"
+          : "Plain fetch issuer website search ran";
+    const browserFailureDetails = Array.from(browserFailureMessages).slice(0, 1);
     return {
       sources,
       adapters: [
@@ -827,22 +932,24 @@ async function collectCompanyWebsiteEvidence(
           missing: links.length
             ? [
                 "PDF text extraction for discovered links",
-                peopleFound ? "LinkedIn reconciliation for issuer-sourced people" : "parseable management or board profile pages",
-                ...(browserFailures ? [`${browserFailures} rendered page fetch attempt${browserFailures === 1 ? "" : "s"} failed`] : [])
+                peopleFound ? "public profile link reconciliation for issuer-sourced people" : "parseable management or board profile pages",
+                ...browserFailureDetails,
+                ...(browserFailures ? [`${browserFailures} rendered page fetch attempt${browserFailures === 1 ? "" : "s"} failed`] : []),
+                ...(requestFailures ? [`${requestFailures} bounded fetch request${requestFailures === 1 ? "" : "s"} failed`] : [])
               ]
-            : ["issuer document links", "management and governance links"]
+            : ["issuer document links", "management and governance links", ...browserFailureDetails]
         }
       ]
     };
-  } catch {
+  } catch (error) {
     return {
       sources: [] as SourceDocument[],
       adapters: [
         {
           id: "company-website",
           name: "Company website crawler",
-          status: "needs_key" as const,
-          note: "Company website could not be fetched during this run.",
+          status: "unavailable" as const,
+          note: externalFailureNote("Company website", error),
           contributes: ["issuer presentations", "technical reports", "company news"],
           missing: ["website document discovery"]
         }
@@ -851,54 +958,32 @@ async function collectCompanyWebsiteEvidence(
   }
 }
 
-async function collectManagementDiscoveryEvidence(company: CompanyCandidate, now: string): Promise<AdapterEvidenceResult> {
+async function collectManagementDiscoveryEvidence(company: CompanyCandidate): Promise<AdapterEvidenceResult> {
   const people = company.management ?? [];
-  const sources: SourceDocument[] = people.map((person, index) => ({
-    id: `management-${company.id}-${index}-${slug(person.name)}`,
-    title: `${person.name} - ${person.role}`,
-    sourceType: "manual",
-    publisher: person.sourceUrl ? "Issuer management profile" : "Management registry",
-    url: person.sourceUrl ?? company.websiteUrl ?? (company.country === "US" ? "https://www.sec.gov/search-filings" : "https://www.sedarplus.ca/"),
-    retrievedAt: now,
-    excerpts: [
-      `Management biography: ${person.name} is listed as ${person.role} for ${company.name}.`,
-      person.bio,
-      ...person.experience.slice(0, 3).map((item) => `Track record evidence: ${item}`)
-    ]
-  }));
 
   return {
-    sources,
+    sources: [],
     adapters: [
       {
         id: "management-roster",
-        name: "Management roster enrichment",
-        status: people.length ? "configured" : "manual",
+        name: "Management roster context",
+        status: "manual",
         note: people.length
-          ? `Added ${people.length} structured management profile${people.length === 1 ? "" : "s"} from the issuer registry and profile links.`
+          ? `${people.length} registry profile${people.length === 1 ? "" : "s"} remain available as matching context only; they do not create evidence or affect evidence confidence.`
           : "No structured management roster is available yet for this company.",
-        contributes: ["verified roster seed", "management biographies", "track-record diligence prompts"],
+        contributes: ["matching context for retrieved issuer pages", "management diligence prompts"],
         missing: people.length
-          ? ["full board and project-team extraction", "appointment-date extraction"]
+          ? ["document-backed roster verification", "full board and project-team extraction", "appointment-date extraction"]
           : ["executive roster", "board roster", "technical and project-lead roster"]
       },
       {
         id: "linkedin-candidate-discovery",
-        name: "LinkedIn candidate discovery",
-        status: people.some((person) => person.linkedInUrl && person.sourceUrl) ? "configured" : "manual",
+        name: "Public profile link context",
+        status: "manual",
         note:
-          "LinkedIn profiles use a three-tier status: Verified, Likely match, or Needs review. Likely matches can display for coverage but remain conservative in scoring.",
-        contributes: ["verified profile display", "likely profile coverage", "needs-review profile gaps"],
-        missing: ["live LinkedIn candidate search at app runtime", "runtime Composio or LinkedIn provider configuration"]
-      },
-      {
-        id: "composio-management-search",
-        name: "Composio public management search",
-        status: "needs_key",
-        note:
-          "Backend adapter boundary is reserved for Composio web search, but runtime provider credentials are not configured in this app process yet.",
-        contributes: ["public web discovery for leadership, board, LinkedIn, and prior outcomes"],
-        missing: ["runtime Composio API credential", "search-result persistence", "candidate review queue"]
+          "LinkedIn URLs are supplied or discovered public profile links. The app does not query LinkedIn or verify current profile content.",
+        contributes: ["public profile links supplied by registry data or retrieved issuer pages"],
+        missing: ["live LinkedIn search", "current LinkedIn profile verification"]
       }
     ]
   };
@@ -958,35 +1043,45 @@ async function collectIssuerNewsEvidence(
   company: CompanyCandidate,
   fetcher: Fetcher,
   now: string,
-  browserFetcher?: BrowserPageFetcher
+  browserFetcher?: BrowserPageFetcher,
+  renderedCrawlingDisabled = false
 ): Promise<AdapterEvidenceResult> {
   if (!company.websiteUrl) return { sources: [], adapters: [] };
   const sources: SourceDocument[] = [];
   let browserFailures = 0;
+  const browserFailureMessages = new Set<string>();
+  let requestFailures = 0;
+  let successfulPages = 0;
   let usedBrowser = false;
   let usedFetchFallback = false;
 
   try {
-    const seedPages = dedupeLinks([{ title: "Company homepage", href: company.websiteUrl }, ...likelyCompanyNewsLinks(company.websiteUrl)]).slice(0, 8);
+    const discoveryPages = dedupeLinks([{ title: "Company homepage", href: company.websiteUrl }, ...likelyCompanyNewsLinks(company.websiteUrl)]).slice(0, MAX_NEWS_DISCOVERY_PAGES);
     const articleCandidates: Array<{ href: string; title: string }> = [];
 
-    for (const pageLink of seedPages) {
+    for (const pageLink of discoveryPages) {
       let page: BrowserPageResult | undefined;
       if (browserFetcher) {
         const rendered = await browserFetcher(pageLink.href, { timeoutMs: 8000 });
         if (rendered.ok && rendered.html) {
           usedBrowser = true;
+          successfulPages += 1;
           page = rendered;
         } else {
           browserFailures += 1;
+          if (rendered.error) browserFailureMessages.add(rendered.error);
         }
       }
 
       if (!page) {
         try {
           const response = await fetcher(pageLink.href);
-          if (!response.ok) continue;
+          if (!response.ok) {
+            requestFailures += 1;
+            continue;
+          }
           const html = await safeText(response);
+          successfulPages += 1;
           usedFetchFallback = usedFetchFallback || Boolean(browserFetcher);
           page = {
             url: pageLink.href,
@@ -999,6 +1094,7 @@ async function collectIssuerNewsEvidence(
             ok: true
           };
         } catch {
+          requestFailures += 1;
           continue;
         }
       }
@@ -1011,24 +1107,30 @@ async function collectIssuerNewsEvidence(
       );
     }
 
-    const articleLinks = dedupeLinks(articleCandidates).slice(0, 8);
+    const articleLinks = dedupeLinks(articleCandidates).slice(0, MAX_NEWS_ARTICLES);
     for (const [index, link] of articleLinks.entries()) {
       let page: BrowserPageResult | undefined;
       if (browserFetcher) {
         const rendered = await browserFetcher(link.href, { timeoutMs: 8000 });
         if (rendered.ok && rendered.html) {
           usedBrowser = true;
+          successfulPages += 1;
           page = rendered;
         } else {
           browserFailures += 1;
+          if (rendered.error) browserFailureMessages.add(rendered.error);
         }
       }
 
       if (!page) {
         try {
           const response = await fetcher(link.href);
-          if (!response.ok) continue;
+          if (!response.ok) {
+            requestFailures += 1;
+            continue;
+          }
           const html = await safeText(response);
+          successfulPages += 1;
           usedFetchFallback = usedFetchFallback || Boolean(browserFetcher);
           page = {
             url: link.href,
@@ -1041,6 +1143,7 @@ async function collectIssuerNewsEvidence(
             ok: true
           };
         } catch {
+          requestFailures += 1;
           continue;
         }
       }
@@ -1059,46 +1162,48 @@ async function collectIssuerNewsEvidence(
         publisher: "Issuer website news",
         url: page.finalUrl || link.href,
         retrievedAt: now,
-        excerpts: [
-          excerpt,
-          `Issuer website news collection mode: ${page.mode === "playwright" ? "Playwright-rendered page" : "plain fetch page"}.`
-        ]
+        excerpts: [excerpt]
       });
     }
 
-    const modeLabel = usedBrowser
-      ? usedFetchFallback
-        ? "Playwright-rendered issuer news search ran; fetch fallback used for unavailable pages"
-        : "Playwright-rendered issuer news search ran"
-      : usedFetchFallback
-        ? "Playwright unavailable; fetch fallback used"
-        : "Plain fetch issuer news search ran";
+    const modeLabel = renderedCrawlingDisabled
+      ? "Rendered crawling disabled; plain fetch fallback used"
+      : usedBrowser
+        ? usedFetchFallback
+          ? "Playwright-rendered issuer news search ran; fetch fallback used for unavailable pages"
+          : "Playwright-rendered issuer news search ran"
+        : usedFetchFallback
+          ? "Playwright unavailable; fetch fallback used"
+          : "Plain fetch issuer news search ran";
     return {
       sources: sources.filter((source, index, allSources) => allSources.findIndex((candidate) => candidate.url === source.url) === index),
       adapters: [
         {
           id: "issuer-news-browser",
           name: "Issuer website news browser crawler",
-          status: "configured",
-          note: `${modeLabel}. Checked ${seedPages.length} issuer news/home page${seedPages.length === 1 ? "" : "s"} and collected ${sources.length} article source${sources.length === 1 ? "" : "s"}.`,
+          status: successfulPages ? "configured" : "unavailable",
+          note: successfulPages
+            ? `${modeLabel}. Retrieved ${successfulPages} bounded issuer page${successfulPages === 1 ? "" : "s"} and collected ${sources.length} article source${sources.length === 1 ? "" : "s"}.`
+            : "Issuer website news pages were blocked, timed out, or unavailable during this run.",
           contributes: ["issuer news releases", "media posts", "drill result updates", "financing and project news"],
-          missing: sources.length
-            ? browserFailures
-              ? [`${browserFailures} rendered news page fetch attempt${browserFailures === 1 ? "" : "s"} failed`]
-              : []
-            : ["issuer-specific rendered news articles"]
+          missing: [
+            ...(!sources.length ? ["issuer-specific rendered news articles"] : []),
+            ...Array.from(browserFailureMessages).slice(0, 1),
+            ...(browserFailures ? [`${browserFailures} rendered news page fetch attempt${browserFailures === 1 ? "" : "s"} failed`] : []),
+            ...(requestFailures ? [`${requestFailures} bounded fetch request${requestFailures === 1 ? "" : "s"} failed`] : [])
+          ]
         }
       ]
     };
-  } catch {
+  } catch (error) {
     return {
       sources: [],
       adapters: [
         {
           id: "issuer-news-browser",
           name: "Issuer website news browser crawler",
-          status: "needs_key",
-          note: "Issuer website news could not be collected during this run.",
+          status: "unavailable",
+          note: externalFailureNote("Issuer website news", error),
           contributes: ["issuer news releases", "media posts"],
           missing: ["rendered issuer news discovery"]
         }
@@ -1107,10 +1212,17 @@ async function collectIssuerNewsEvidence(
   }
 }
 
-async function collectNewswireEvidence(company: CompanyCandidate, fetcher: Fetcher, now: string): Promise<AdapterEvidenceResult> {
+async function collectNewswireEvidence(
+  company: CompanyCandidate,
+  fetcher: Fetcher,
+  now: string,
+  sleep: (milliseconds: number) => Promise<void>
+): Promise<AdapterEvidenceResult> {
   try {
-    const response = await fetcher(GLOBENEWSWIRE_RSS_URL);
-    if (!response.ok) throw new Error("Newswire feed unavailable");
+    const response = requireSuccessfulResponse(
+      await fetchWithRetry(fetcher, GLOBENEWSWIRE_RSS_URL, undefined, { attempts: 2, sleep }),
+      "GlobeNewswire RSS"
+    );
     const rss = await safeText(response);
     const items = Array.from(rss.matchAll(/<item>([\s\S]*?)<\/item>/gi))
       .map((match) => {
@@ -1125,7 +1237,7 @@ async function collectNewswireEvidence(company: CompanyCandidate, fetcher: Fetch
         const haystack = `${item.title} ${item.description}`.toLowerCase();
         return [company.ticker, company.name, ...(company.aliases ?? [])].some((term) => haystack.includes(term.toLowerCase().replace(/\.(v|to)$/i, "")));
       })
-      .slice(0, 6);
+      .slice(0, MAX_NEWSWIRE_ITEMS);
     const sources: SourceDocument[] = items.map((item, index) => ({
         id: `newswire-${company.id}-${index}-${slug(item.title)}`,
         title: item.title,
@@ -1148,15 +1260,15 @@ async function collectNewswireEvidence(company: CompanyCandidate, fetcher: Fetch
         }
       ]
     };
-  } catch {
+  } catch (error) {
     return {
       sources: [] as SourceDocument[],
       adapters: [
         {
           id: "newswire-rss",
           name: "Newswire RSS discovery",
-          status: "needs_key" as const,
-          note: "Newswire RSS could not be fetched during this run.",
+          status: "unavailable" as const,
+          note: externalFailureNote("GlobeNewswire RSS", error),
           contributes: ["issuer news discovery"],
           missing: ["drill result news", "financing announcements", "technical updates"]
         }
@@ -1221,28 +1333,35 @@ function dedupeSources(sources: SourceDocument[]) {
 
 export async function collectEvidence(company: CompanyCandidate, options: EvidenceOptions = {}): Promise<EvidenceCollectionResult> {
   const fetcher = createTimeoutFetcher(options.fetcher ?? fetch, options.fetchTimeoutMs, options.signal);
-  const ownedBrowserFetcher = options.browserFetcher ? undefined : createPlaywrightBrowserFetcher();
-  const rawBrowserFetcher = options.browserFetcher ?? ownedBrowserFetcher;
+  const renderedCrawlingDisabled = options.renderedCrawling === false;
+  const providedBrowserFetcher = renderedCrawlingDisabled ? undefined : options.browserFetcher;
+  const ownedBrowserFetcher = providedBrowserFetcher
+    ? undefined
+    : createPlaywrightBrowserFetcher({
+        enabled: !renderedCrawlingDisabled,
+        executablePath: options.browserExecutablePath
+      });
+  const rawBrowserFetcher = providedBrowserFetcher ?? ownedBrowserFetcher;
   const browserFetcher = rawBrowserFetcher ? cachedBrowserFetcher(rawBrowserFetcher) : undefined;
   try {
     const now = options.now?.() ?? retrievedAt();
-    const seeded = collectSources(company);
+    const sleep = options.sleep ?? defaultSleep;
     // Let every adapter settle before closing the browser shared by this run.
     const results = await Promise.allSettled([
-      collectSecEvidence(company, fetcher, now),
-      collectSedarEvidence(company, fetcher, now),
-      collectCompanyWebsiteEvidence(company, fetcher, now, browserFetcher),
-      collectIssuerNewsEvidence(company, fetcher, now, browserFetcher),
-      collectNewswireEvidence(company, fetcher, now),
-      collectManagementDiscoveryEvidence(company, now)
+      collectSecEvidence(company, fetcher, now, options),
+      collectSedarEvidence(company),
+      collectCompanyWebsiteEvidence(company, fetcher, now, browserFetcher, renderedCrawlingDisabled),
+      collectIssuerNewsEvidence(company, fetcher, now, browserFetcher, renderedCrawlingDisabled),
+      collectNewswireEvidence(company, fetcher, now, sleep),
+      collectManagementDiscoveryEvidence(company)
     ]);
     const collected = results.map((result) => {
       if (result.status === "rejected") throw result.reason;
       return result.value;
     });
-    const sources = dedupeSources([...seeded.sources, ...collected.flatMap((result) => result.sources)]);
+    const sources = dedupeSources(collected.flatMap((result) => result.sources));
     const facts = extractEvidenceFacts(sources, now).filter((fact) => fact.sourceUrl && fact.excerpt);
-    const adapters = [...seeded.adapters, ...collected.flatMap((result) => result.adapters)];
+    const adapters = [...sourceAdapterStatuses(company), ...collected.flatMap((result) => result.adapters)];
     const status = buildStatus(facts, adapters, now);
     return { sources, facts, status, gaps: status.gaps };
   } finally {

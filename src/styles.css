@@ -65,6 +65,16 @@ button:disabled {
   background: #f5f7f4;
 }
 
+.demo-banner {
+  padding: 8px 16px;
+  border-bottom: 1px solid #7c2d12;
+  background: #fbbf24;
+  color: #3b2104;
+  font-size: 0.84rem;
+  font-weight: 850;
+  text-align: center;
+}
+
 .app-header {
   background: #121f1c;
   color: #fff;
@@ -108,18 +118,40 @@ button:disabled {
 }
 
 .hero {
-  background:
-    linear-gradient(90deg, rgba(18, 31, 28, 0.9), rgba(35, 56, 49, 0.66)),
-    url("https://images.unsplash.com/photo-1578357078586-491adf1aa5ba?auto=format&fit=crop&w=1800&q=80");
-  background-position: center;
-  background-size: cover;
+  position: relative;
+  z-index: 0;
+  overflow: hidden;
+  background: #182c26;
   color: #fff;
 }
 
+.hero::before,
+.hero::after {
+  position: absolute;
+  z-index: -1;
+  content: "";
+  pointer-events: none;
+}
+
+.hero::before {
+  inset: 0;
+  background: #2c5145;
+  clip-path: polygon(58% 0, 100% 0, 100% 100%, 38% 100%);
+  opacity: 0.58;
+}
+
+.hero::after {
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 48%;
+  background: #b98d3b;
+  clip-path: polygon(0 78%, 18% 32%, 35% 62%, 53% 18%, 72% 56%, 100% 12%, 100% 100%, 0 100%);
+  opacity: 0.14;
+}
+
 .research-hero {
-  background:
-    linear-gradient(90deg, rgba(18, 31, 28, 0.94), rgba(35, 56, 49, 0.78)),
-    url("https://images.unsplash.com/photo-1578357078586-491adf1aa5ba?auto=format&fit=crop&w=1800&q=80");
+  background: #121f1c;
 }
 
 .topbar,
@@ -1451,7 +1483,7 @@ button:disabled {
   font-weight: 600;
 }
 
-.lens-avatar {
+.lens-icon {
   display: inline-grid;
   flex: 0 0 76px;
   width: 76px;
@@ -1459,29 +1491,23 @@ button:disabled {
   place-items: center;
   overflow: hidden;
   border: 3px solid #fff;
-  border-radius: 50%;
+  border-radius: 8px;
   color: #fff;
   font-size: 0.92rem;
   font-weight: 900;
   box-shadow: 0 10px 24px rgba(24, 33, 30, 0.16);
 }
 
-.lens-avatar img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
+.lens-icon.gold {
+  background: #9a722a;
 }
 
-.lens-avatar.gold {
-  background: linear-gradient(135deg, #8a6422, #c99a38);
+.lens-icon.silver {
+  background: #687873;
 }
 
-.lens-avatar.silver {
-  background: linear-gradient(135deg, #53615d, #94a39e);
-}
-
-.lens-avatar.copper {
-  background: linear-gradient(135deg, #7a3d22, #bd7040);
+.lens-icon.copper {
+  background: #92502e;
 }
 
 .lens-card.open .lens-toggle > svg {
@@ -1884,12 +1910,6 @@ button:disabled {
   color: #1c5c49;
   font-weight: 900;
   overflow: hidden;
-}
-
-.management-initials img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
 }
 
 .management-bio {

@@ -1,27 +1,80 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "../src/App";
 import { createResearchRun } from "../src/domain/researchEngine";
 import { resolveCompany } from "../src/domain/companyResolver";
-import { collectSources } from "../src/domain/sourceAdapters";
+import { sourceAdapterStatuses } from "../src/domain/sourceAdapters";
+import { createDemoResearchRun } from "../server/demoFixture";
+import { syntheticResearchSources } from "./fixtures/syntheticEvidence";
 
 describe("App", () => {
+  afterEach(cleanup);
+
+  it("shows the persistent fictional-data warning when the API reports demo mode", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/api/health")) {
+          return Response.json({
+            status: "ok",
+            mode: "demo",
+            demoNotice: "Demo data — fictional and not investment research"
+          });
+        }
+        if (url.includes("/api/companies")) {
+          return Response.json([
+            {
+              id: "aeon-ridge-minerals-demo",
+              name: "Aeon Ridge Minerals Ltd.",
+              ticker: "AEON.V",
+              exchange: "TSXV",
+              country: "CA",
+              commodityFocus: ["Gold", "Copper"]
+            }
+          ]);
+        }
+        if (url.endsWith("/api/research-runs") && init?.method === "POST") {
+          return Response.json(createDemoResearchRun());
+        }
+        return Response.json([]);
+      })
+    );
+
+    render(<App />);
+
+    const notice = await screen.findByText("Demo data — fictional and not investment research");
+    expect(notice).toHaveAttribute("role", "status");
+    expect(screen.getAllByRole("button", { name: /research aeon\.v/i })).toHaveLength(1);
+    expect(notice).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /research aeon\.v/i }));
+    await screen.findByRole("heading", { name: "Aeon Ridge Minerals Ltd." });
+    expect(screen.getByText("Demo data — fictional and not investment research")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /share structure/i }));
+    const ownershipChart = screen.getByRole("img", { name: /ownership distribution/i }).parentElement!;
+    expect(within(ownershipChart).getByText("67%")).toBeInTheDocument();
+    expect(within(ownershipChart).getByText("8%")).toBeInTheDocument();
+    expect(within(ownershipChart).getByText("15%")).toBeInTheDocument();
+    expect(within(ownershipChart).getByText("10%")).toBeInTheDocument();
+  });
+
   it("generates a single-stock research memo with scorecard, lenses, sources, and history", async () => {
     const company = resolveCompany("USGO");
     if (!company) throw new Error("Missing test company");
-    const collected = collectSources(company);
+    const sources = syntheticResearchSources();
     const run = {
-      ...createResearchRun(company, collected.sources, "USGO"),
+      ...createResearchRun(company, sources, "USGO"),
       evidenceFacts: [
         {
           id: "fact-test-technical-report",
           category: "technical_report",
           label: "Technical report / project disclosure",
           value: "Technical report evidence was discovered automatically.",
-          sourceId: collected.sources[0].id,
-          sourceUrl: collected.sources[0].url,
-          sourceTitle: collected.sources[0].title,
+          sourceId: sources[0].id,
+          sourceUrl: sources[0].url,
+          sourceTitle: sources[0].title,
           excerpt: "Technical report evidence was discovered automatically.",
           confidence: "medium",
           retrievedAt: "2026-07-03T12:00:00.000Z"
@@ -33,7 +86,7 @@ describe("App", () => {
         adapters: [
           {
             id: "sec-edgar-live",
-            name: "SEC EDGAR automated discovery",
+            name: "SEC EDGAR filing retrieval",
             status: "configured",
             note: "Resolved CIK and discovered recent SEC filings.",
             contributes: ["recent filing URLs"],
@@ -54,7 +107,7 @@ describe("App", () => {
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
         if (url.endsWith("/api/research-runs") && init?.method === "POST") {
-          return Response.json({ ...run, adapters: collected.adapters });
+          return Response.json({ ...run, adapters: sourceAdapterStatuses(company) });
         }
         if (url.endsWith("/api/research-runs")) {
           return Response.json([run]);
@@ -68,6 +121,8 @@ describe("App", () => {
     expect(screen.getByTestId("sticky-search")).toHaveClass("compact-search");
     expect(screen.getByTestId("hero-search")).toBeInTheDocument();
     expect(screen.getByText(/Explore companies/i)).toBeInTheDocument();
+    expect(screen.getByText("3 analytical frameworks")).toBeInTheDocument();
+    expect(screen.queryByText("3 investor frameworks")).not.toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: /research/i }).length).toBeGreaterThanOrEqual(10);
 
     const tickerInputs = screen.getAllByLabelText(/ticker or company/i);
@@ -98,7 +153,7 @@ describe("App", () => {
     expect(screen.getByText(/Market snapshot/i)).toBeInTheDocument();
     expect(screen.getByRole("region", { name: /Research Collection Status/i })).toBeInTheDocument();
     expect(screen.getByText(/Click to review adapters/i)).toBeInTheDocument();
-    expect(screen.queryByText(/SEC EDGAR automated discovery/i)).not.toBeVisible();
+    expect(screen.queryByText(/SEC EDGAR filing retrieval/i)).not.toBeVisible();
     expect(screen.getAllByText(/Current price/i).length).toBeGreaterThan(0);
     expect(screen.getByText(/52-week high/i)).toBeInTheDocument();
     expect(screen.getByText(/52-week low/i)).toBeInTheDocument();
@@ -113,7 +168,7 @@ describe("App", () => {
     expect(screen.getByText(/Scoring methodology/i)).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /NI 43-101/i })).not.toBeVisible();
     await userEvent.click(screen.getByText(/Research Collection Status/i));
-    expect(screen.getByText(/SEC EDGAR automated discovery/i)).toBeVisible();
+    expect(screen.getByText(/SEC EDGAR filing retrieval/i)).toBeVisible();
     expect(screen.getAllByText(/Technical report \/ project disclosure/i).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Fully diluted shares/i).length).toBeGreaterThan(0);
     await userEvent.click(screen.getByText(/Junior Mining Feasibility Framework/i));
@@ -125,31 +180,30 @@ describe("App", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /market perspectives/i }));
     expect(screen.queryByText(/^Score$/i)).not.toBeInTheDocument();
-    const investorRegion = screen.getByRole("region", { name: /Analyst and investor viewpoints/i });
+    const investorRegion = screen.getByRole("region", { name: /Analytical frameworks/i });
     const brokerRegion = screen.getByRole("region", { name: /Broker and market coverage/i });
     expect(investorRegion).not.toHaveTextContent(/Analyst Forecast/i);
     expect(brokerRegion).toHaveTextContent(/Analyst Forecast/i);
     expect(screen.getByRole("heading", { name: /Analyst Forecast/i })).toBeInTheDocument();
     expect(screen.getByText(/Analyst target data was not available/i)).toBeInTheDocument();
-    expect(screen.getByRole("img", { name: /Rick Rule portrait/i })).toBeInTheDocument();
-    expect(screen.getByRole("img", { name: /Eric Sprott portrait/i })).toBeInTheDocument();
-    expect(screen.getByRole("img", { name: /Marin Katusa portrait/i })).toBeInTheDocument();
+    expect(within(investorRegion).queryByRole("img")).not.toBeInTheDocument();
     expect(screen.getByRole("img", { name: /Analyst forecast chart/i })).toBeInTheDocument();
     expect(screen.getByText(/Awaiting target data/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Rick Rule/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Eric Sprott/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Marin Katusa/i })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: /Rick Rule/i }));
-    expect(screen.getByText(/How this investor would approach it/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Contrarian and downside-survival lens/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Discovery and sponsorship lens/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Macro, jurisdiction, and capital-scarcity lens/i })).toBeInTheDocument();
+    expect(screen.queryByText(/Rick Rule|Eric Sprott|Marin Katusa/i)).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /Contrarian and downside-survival lens/i }));
+    expect(screen.getByText(/How to apply this framework/i)).toBeInTheDocument();
     expect(screen.getByText(/resource-cycle investing/i)).toBeInTheDocument();
     expect(screen.getByText(/Framework checklist/i)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Rule Investment Media/i })).toBeInTheDocument();
     expect(screen.getByText(/Figures to watch/i)).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: /news/i }));
     expect(screen.getByText(/News and Catalysts/i)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /read source/i })).toBeInTheDocument();
-    expect(screen.getByText(/Future news pipeline/i)).toBeInTheDocument();
+    expect(screen.getByText(/External mining-news references/i)).toBeInTheDocument();
+    expect(screen.getByText(/not automated feeds/i)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Junior Mining Network/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /TMX Newsfile/i })).toBeInTheDocument();
     expect(screen.getAllByLabelText(/news source logo/i).length).toBeGreaterThanOrEqual(5);
@@ -159,7 +213,8 @@ describe("App", () => {
     expect(screen.getByText(/Management Team/i)).toBeInTheDocument();
     expect(screen.getAllByText(/Track record/i).length).toBeGreaterThan(0);
     expect(screen.getByText(/Management intelligence/i)).toBeInTheDocument();
-    expect(screen.getAllByText(/LinkedIn verified|LinkedIn likely match|LinkedIn needs review/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Profile link supplied|Profile link discovered|Profile link unavailable/i).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/LinkedIn verified|LinkedIn likely match|LinkedIn needs review/i)).not.toBeInTheDocument();
     expect(screen.getAllByText(/Key background/i).length).toBeGreaterThan(0);
     const firstBackground = screen.getAllByText(/Key background/i)[0].closest(".management-highlights") as HTMLElement | null;
     if (!firstBackground) throw new Error("Missing management highlights");
@@ -168,7 +223,7 @@ describe("App", () => {
     screen.queryAllByText(/Diligence checklist/i).forEach((item) => expect(item).not.toBeVisible());
     await userEvent.click(screen.getAllByText(/Read full profile/i)[0]);
     expect(screen.getAllByText(/Diligence checklist/i)[0]).toBeVisible();
-    expect(screen.getAllByRole("link", { name: /LinkedIn/i }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("link", { name: /Public profile link/i }).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Coffee Gold Deposit/i).length).toBeGreaterThan(0);
 
     await userEvent.click(screen.getByRole("button", { name: /share structure/i }));
@@ -230,11 +285,11 @@ describe("App", () => {
   it("sends imported issuer evidence with a research request", async () => {
     const company = resolveCompany("USGO");
     if (!company) throw new Error("Missing test company");
-    const collected = collectSources(company);
+    const sources = syntheticResearchSources();
     const run = createResearchRun(
       company,
       [
-        ...collected.sources,
+        ...sources,
         {
           id: "manual-usgo-technical-report",
           title: "Whistler Technical Report",
@@ -252,7 +307,7 @@ describe("App", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith("/api/research-runs") && init?.method === "POST") {
-        return Response.json({ ...run, adapters: collected.adapters });
+        return Response.json({ ...run, adapters: sourceAdapterStatuses(company) });
       }
       if (url.endsWith("/api/research-runs")) {
         return Response.json([]);

@@ -2,12 +2,22 @@ import type { AdapterStatus, CompanyCandidate, ResearchRun, SourceDocument } fro
 
 export type ResearchRunResponse = ResearchRun & { adapters?: AdapterStatus[] };
 export type ManualSourceDraft = Pick<SourceDocument, "title" | "sourceType" | "publisher" | "url" | "excerpts">;
+export interface RuntimeConfig {
+  mode: "live" | "demo";
+  demoNotice?: string;
+}
 
 const RESEARCH_FAILURE_MESSAGE = "Research failed. The service is temporarily unavailable; please try again.";
 
 async function serverErrorMessage(response: Response) {
   const body = await response.json().catch(() => undefined) as { error?: unknown } | undefined;
   return typeof body?.error === "string" ? body.error : RESEARCH_FAILURE_MESSAGE;
+}
+
+export async function fetchRuntimeConfig(signal?: AbortSignal): Promise<RuntimeConfig> {
+  const response = await fetch("/api/health", { signal });
+  if (!response.ok) throw new Error("Unable to load runtime configuration.");
+  return response.json() as Promise<RuntimeConfig>;
 }
 
 export async function fetchResearchHistory(signal?: AbortSignal): Promise<ResearchRun[]> {

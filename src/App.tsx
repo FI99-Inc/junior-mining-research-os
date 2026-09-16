@@ -8,17 +8,22 @@ import {
   PieChart,
   Newspaper,
   Play,
+  Scale,
   Search,
+  ShieldCheck,
   Sparkles,
+  Telescope,
   Users
 } from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import {
   fetchResearchHistory,
+  fetchRuntimeConfig,
   requestResearchRun,
   searchCompanyCandidates,
   type ManualSourceDraft,
-  type ResearchRunResponse
+  type ResearchRunResponse,
+  type RuntimeConfig
 } from "./api/researchApi";
 import { COMPANY_UNIVERSE } from "./domain/companyResolver";
 import { managementHighlights } from "./domain/managementHighlights";
@@ -40,15 +45,23 @@ type ReportTab = "scorecard" | "lenses" | "management" | "risks" | "news" | "sha
 type TimelineHorizon = ResearchRun["scorecard"]["timelineScores"][number]["horizon"];
 
 const statusLabel: Record<AdapterStatus["status"], string> = {
-  seeded: "Seeded",
   configured: "Configured",
-  needs_key: "Needs key",
+  needs_configuration: "Needs configuration",
+  unavailable: "Unavailable",
   manual: "Manual"
 };
 
 const unavailable = "Unavailable";
 
-const NEWS_PIPELINE_SOURCES = [
+function isHttpUrl(value: string) {
+  try {
+    return ["http:", "https:"].includes(new URL(value).protocol);
+  } catch {
+    return false;
+  }
+}
+
+const EXTERNAL_NEWS_REFERENCES = [
   {
     name: "Junior Mining Network",
     logo: "JMN",
@@ -224,7 +237,15 @@ function TimelineSelector({
   );
 }
 
-function ExplorationGrid({ onResearch, loading }: { onResearch: (company: CompanyCandidate) => void; loading: boolean }) {
+function ExplorationGrid({
+  companies,
+  onResearch,
+  loading
+}: {
+  companies: CompanyCandidate[];
+  onResearch: (company: CompanyCandidate) => void;
+  loading: boolean;
+}) {
   return (
     <section className="explore-panel" aria-label="Explore companies">
       <div className="section-head compact-head">
@@ -235,7 +256,7 @@ function ExplorationGrid({ onResearch, loading }: { onResearch: (company: Compan
         <p>Browse a few names when you do not have a specific ticker in mind. This list can expand as the registry grows.</p>
       </div>
       <div className="explore-grid">
-        {COMPANY_UNIVERSE.slice(0, 16).map((company) => (
+        {companies.map((company) => (
           <article className="explore-card" key={company.id}>
             <div>
               <strong>{company.ticker}</strong>
@@ -433,18 +454,20 @@ function SourceImportPanel({
   const [url, setUrl] = useState("");
   const [evidenceText, setEvidenceText] = useState("");
   const [sourceType, setSourceType] = useState<ManualSourceDraft["sourceType"]>("manual");
+  const sourceUrl = url.trim();
+  const canAddSource = Boolean(title.trim() && isHttpUrl(sourceUrl) && evidenceText.trim());
 
   function addSource() {
     const excerpts = evidenceText
       .split(/\n{2,}/)
       .map((excerpt) => excerpt.trim())
       .filter(Boolean);
-    if (!title.trim() || excerpts.length === 0) return;
+    if (!canAddSource || excerpts.length === 0) return;
     onAdd({
       title: title.trim(),
       sourceType,
       publisher: "Issuer document import",
-      url: url.trim() || "Manual source",
+      url: sourceUrl,
       excerpts
     });
     setTitle("");
@@ -477,6 +500,8 @@ function SourceImportPanel({
           Source URL
           <input
             id="manual-source-url"
+            type="url"
+            required
             value={url}
             onChange={(event) => setUrl(event.target.value)}
             placeholder="https://company.com/presentation.pdf"
@@ -502,7 +527,7 @@ function SourceImportPanel({
         />
       </label>
       <div className="source-import-actions">
-        <button type="button" onClick={addSource}>
+        <button type="button" onClick={addSource} disabled={!canAddSource}>
           Add Source
         </button>
         {importedSources.length ? (
@@ -631,13 +656,19 @@ function ForecastChart({ forecast, marketSnapshot }: { forecast: AnalystForecast
 
 function LensCard({ lens }: { lens: InvestorLens }) {
   const [open, setOpen] = useState(false);
+  const FrameworkIcon =
+    lens.id === "contrarian-downside-survival"
+      ? ShieldCheck
+      : lens.id === "discovery-sponsorship"
+        ? Telescope
+        : Scale;
 
   return (
     <article className={`lens-card ${open ? "open" : ""}`}>
       <button type="button" className="lens-toggle" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
         <span className="lens-person">
-          <span className={`lens-avatar ${lens.portraitTone}`}>
-            {lens.portraitUrl ? <img src={lens.portraitUrl} alt={`${lens.name} portrait`} loading="lazy" /> : lens.initials}
+          <span className={`lens-icon ${lens.visualTone}`} aria-hidden>
+            <FrameworkIcon size={28} />
           </span>
           <span>
             <strong>{lens.name}</strong>
@@ -649,19 +680,19 @@ function LensCard({ lens }: { lens: InvestorLens }) {
       <p className="lens-focus">{lens.approach}</p>
       {open ? (
         <div className="lens-body">
-          <h4>Background</h4>
+          <h4>Framework rationale</h4>
           <p>{lens.background}</p>
-          <h4>How this investor would approach it</h4>
+          <h4>How to apply this framework</h4>
           <p>{lens.view}</p>
           <div className="two-column compact">
             <div>
-              <h4>What they would like</h4>
+              <h4>What supports the case</h4>
               {lens.positives.map((item) => (
                 <p key={item}>{item}</p>
               ))}
             </div>
             <div>
-              <h4>What they would challenge</h4>
+              <h4>What the framework challenges</h4>
               {lens.concerns.map((item) => (
                 <p key={item}>{item}</p>
               ))}
@@ -679,18 +710,15 @@ function LensCard({ lens }: { lens: InvestorLens }) {
               <li key={item}>{item}</li>
             ))}
           </ul>
-          <div className="lens-source-links">
-            {lens.sourceLinks.map((source) => (
-              <a href={source.url} target="_blank" rel="noreferrer" key={source.url}>
-                {source.label} <ExternalLink size={14} aria-hidden />
-              </a>
-            ))}
-            {lens.portraitSourceUrl ? (
-              <a href={lens.portraitSourceUrl} target="_blank" rel="noreferrer">
-                Portrait source <ExternalLink size={14} aria-hidden />
-              </a>
-            ) : null}
-          </div>
+          {lens.sourceLinks.length ? (
+            <div className="lens-source-links">
+              {lens.sourceLinks.map((source) => (
+                <a href={source.url} target="_blank" rel="noreferrer" key={source.url}>
+                  {source.label} <ExternalLink size={14} aria-hidden />
+                </a>
+              ))}
+            </div>
+          ) : null}
           <small>{lens.disclaimer}</small>
         </div>
       ) : null}
@@ -1015,15 +1043,15 @@ function NewsPipelineSources() {
   return (
     <section className="news-pipeline">
       <div>
-        <p className="eyebrow">Future news pipeline</p>
-        <h3>Reliable mining news sources to connect</h3>
+        <p className="eyebrow">External mining-news references</p>
+        <h3>Additional public research links</h3>
         <p>
-          These sources are good candidates for the next news adapter so each company page can aggregate issuer releases,
-          sector headlines, and catalyst updates in one place.
+          These sites are optional outbound research references, not automated feeds. Availability, coverage, and page
+          structure are controlled by each third party.
         </p>
       </div>
       <div className="news-source-grid">
-        {NEWS_PIPELINE_SOURCES.map((source) => (
+        {EXTERNAL_NEWS_REFERENCES.map((source) => (
           <a href={source.url} target="_blank" rel="noreferrer" key={source.name}>
             <span className="news-source-logo" aria-label={`${source.name} news source logo`}>
               {source.logo}
@@ -1039,12 +1067,25 @@ function NewsPipelineSources() {
   );
 }
 
+function percentageFrom(value: string | undefined) {
+  const match = value?.match(/(\d+(?:\.\d+)?)\s*%/);
+  return match ? Number(match[1]) : undefined;
+}
+
 function ShareOwnershipPie({ run }: { run: ResearchRunResponse }) {
+  const sourcedValues = [
+    percentageFrom(run.shareStructure.publicFloat),
+    percentageFrom(run.shareStructure.insiderOwnership),
+    percentageFrom(run.shareStructure.strategicOwnership),
+    percentageFrom(run.shareStructure.institutionalOwnership)
+  ];
+  const hasCompleteOwnership = sourcedValues.every((value): value is number => value !== undefined) && Math.abs(sourcedValues.reduce((sum, value) => sum + value, 0) - 100) < 0.5;
+  const values = hasCompleteOwnership ? sourcedValues : [52, 14, 18, 16];
   const segments = [
-    { label: "Public float", value: 52, color: "#2a7b6f" },
-    { label: "Insiders", value: 14, color: "#b98d3b" },
-    { label: "Strategic", value: 18, color: "#7b5ea8" },
-    { label: "Institutional", value: 16, color: "#9a6542" }
+    { label: "Public float", value: values[0], color: "#2a7b6f" },
+    { label: "Insiders", value: values[1], color: "#b98d3b" },
+    { label: "Strategic", value: values[2], color: "#7b5ea8" },
+    { label: "Institutional", value: values[3], color: "#9a6542" }
   ];
 
   return (
@@ -1079,7 +1120,9 @@ function ShareOwnershipPie({ run }: { run: ResearchRunResponse }) {
         ))}
       </div>
       <small>
-        Visualization uses a placeholder split until current ownership data is complete. Do not treat it as filed ownership.
+        {hasCompleteOwnership
+          ? "Visualization uses the ownership percentages shown in this report."
+          : "Visualization uses a placeholder split until current ownership data is complete. Do not treat it as filed ownership."}
       </small>
     </div>
   );
@@ -1127,7 +1170,7 @@ function SummaryCards({ run }: { run: ResearchRunResponse }) {
       <div className="summary-card">
         <span>Perspectives</span>
         <strong>{run.investorLenses.length}</strong>
-        <small>named investor frameworks</small>
+        <small>independent analytical frameworks</small>
       </div>
       <div className="summary-card">
         <span>Red flags</span>
@@ -1147,6 +1190,8 @@ export default function App() {
   const [query, setQuery] = useState("USGO");
   const [run, setRun] = useState<ResearchRunResponse | null>(null);
   const [history, setHistory] = useState<ResearchRun[]>([]);
+  const [runtime, setRuntime] = useState<RuntimeConfig>({ mode: "live" });
+  const [exploreCompanies, setExploreCompanies] = useState(COMPANY_UNIVERSE.slice(0, 16));
   const [suggestions, setSuggestions] = useState<CompanyCandidate[]>([]);
   const [activeTab, setActiveTab] = useState<ReportTab>("scorecard");
   const [selectedHorizon, setSelectedHorizon] = useState<TimelineHorizon>("1Y");
@@ -1167,8 +1212,25 @@ export default function App() {
   }
 
   useEffect(() => {
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const config = await fetchRuntimeConfig(controller.signal);
+        if (controller.signal.aborted || config.mode !== "demo") return;
+        const demoCompanies = await searchCompanyCandidates("", controller.signal);
+        if (controller.signal.aborted) return;
+        setRuntime(config);
+        setExploreCompanies(demoCompanies);
+        setQuery(demoCompanies[0]?.ticker ?? "");
+      } catch {
+        // Live mode remains the conservative default if runtime discovery fails.
+      }
+    })();
     void loadHistory();
-    return () => researchRequest.current?.abort();
+    return () => {
+      controller.abort();
+      researchRequest.current?.abort();
+    };
   }, []);
 
   useEffect(() => { reportHeading.current?.focus(); }, [run]);
@@ -1248,6 +1310,11 @@ export default function App() {
   return (
     <main className="app-shell">
       <div className="app-chrome">
+      {runtime.mode === "demo" ? (
+        <div className="demo-banner" role="status">
+          {runtime.demoNotice}
+        </div>
+      ) : null}
       <header className="app-header">
         <div className="app-header-inner">
           <div>
@@ -1300,7 +1367,7 @@ export default function App() {
               </p>
               <div className="hero-metrics">
                 <span>Canada/US universe</span>
-                <span>3 investor frameworks</span>
+                <span>3 analytical frameworks</span>
                 <span>citation-first analysis</span>
               </div>
             </div>
@@ -1317,14 +1384,16 @@ export default function App() {
               onFocus={() => setFocusedSearch("hero")}
               onPick={pickCompany}
             />
-            <ExplorationGrid loading={loading} onResearch={(company) => void runResearch(company.ticker)} />
-            <div className="home-import-panel">
-              <SourceImportPanel
-                importedSources={importedSources}
-                onAdd={(source) => setImportedSources((sources) => [...sources, source])}
-                onClear={() => setImportedSources([])}
-              />
-            </div>
+            <ExplorationGrid companies={exploreCompanies} loading={loading} onResearch={(company) => void runResearch(company.ticker)} />
+            {runtime.mode === "live" ? (
+              <div className="home-import-panel">
+                <SourceImportPanel
+                  importedSources={importedSources}
+                  onAdd={(source) => setImportedSources((sources) => [...sources, source])}
+                  onClear={() => setImportedSources([])}
+                />
+              </div>
+            ) : null}
           </div>
         ) : null}
       </section>
@@ -1442,17 +1511,17 @@ export default function App() {
 
               {activeTab === "lenses" ? (
                 <>
-                  <section className="panel lens-section" aria-label="Analyst and investor viewpoints">
+                  <section className="panel lens-section" aria-label="Analytical frameworks">
                     <div className="section-head">
                       <div>
-                        <p className="eyebrow">Analyst and investor viewpoints</p>
+                        <p className="eyebrow">Independent analytical frameworks</p>
                         <h2>
                           <Brain size={18} aria-hidden /> Market Perspectives
                         </h2>
                       </div>
                       <p>
-                        Compare synthesized investor-style frameworks. Named investor cards are analytical lenses, not
-                        claims of current ownership or endorsement.
+                        Compare three independent research frameworks for downside survival, discovery sponsorship, and
+                        macro, jurisdiction, and capital-scarcity risk. They do not imply affiliation or endorsement.
                       </p>
                     </div>
                     <div className="lens-list">
@@ -1531,20 +1600,16 @@ export default function App() {
                                       <h3>{person.name}</h3>
                                     </div>
                                     <div className="management-initials" aria-hidden>
-                                      {person.profileImageUrl ? (
-                                        <img src={person.profileImageUrl} alt="" loading="lazy" />
-                                      ) : (
-                                        person.name
-                                          .split(" ")
-                                          .map((part) => part[0])
-                                          .join("")
-                                          .slice(0, 2)
-                                      )}
+                                      {person.name
+                                        .split(" ")
+                                        .map((part) => part[0])
+                                        .join("")
+                                        .slice(0, 2)}
                                     </div>
                                   </div>
                                   <div className="management-badges">
                                     <span>{person.sourceStatus === "issuer" ? "Issuer sourced" : person.sourceStatus === "filing" ? "Filing sourced" : person.sourceStatus === "candidate" ? "Candidate source" : "Needs source"}</span>
-                                    <span>{person.linkedInStatus === "verified" ? "LinkedIn verified" : person.linkedInStatus === "likely_match" ? "LinkedIn likely match" : "LinkedIn needs review"}</span>
+                                    <span>{person.linkedInStatus === "verified" ? "Profile link supplied" : person.linkedInStatus === "likely_match" ? "Profile link discovered" : "Profile link unavailable"}</span>
                                   </div>
                                   <div className="management-highlights">
                                     <span>Key background</span>
@@ -1593,10 +1658,10 @@ export default function App() {
                                   <div className="management-links">
                                     {person.linkedInUrl && (person.linkedInStatus === "verified" || person.linkedInStatus === "likely_match") ? (
                                       <a href={person.linkedInUrl} target="_blank" rel="noreferrer">
-                                        {person.linkedInStatus === "verified" ? "LinkedIn" : "Likely LinkedIn"} <ExternalLink size={14} aria-hidden />
+                                        Public profile link <ExternalLink size={14} aria-hidden />
                                       </a>
                                     ) : (
-                                      <span>LinkedIn needs review</span>
+                                      <span>Profile link unavailable</span>
                                     )}
                                     {person.sourceUrl ? (
                                       <a href={person.sourceUrl} target="_blank" rel="noreferrer">
@@ -1769,14 +1834,18 @@ export default function App() {
                   </div>
                   <SourceQualitySummary run={run} />
                   <SourceList sources={run.sources} />
-                  <SourceImportPanel
-                    importedSources={importedSources}
-                    onAdd={(source) => setImportedSources((sources) => [...sources, source])}
-                    onClear={() => setImportedSources([])}
-                  />
-                  <button type="button" className="rerun-button" onClick={() => void runResearch(run.company.ticker)} disabled={loading}>
-                    {loading ? "Running" : "Rerun with imported sources"}
-                  </button>
+                  {runtime.mode === "live" ? (
+                    <>
+                      <SourceImportPanel
+                        importedSources={importedSources}
+                        onAdd={(source) => setImportedSources((sources) => [...sources, source])}
+                        onClear={() => setImportedSources([])}
+                      />
+                      <button type="button" className="rerun-button" onClick={() => void runResearch(run.company.ticker)} disabled={loading}>
+                        {loading ? "Running" : "Rerun with imported sources"}
+                      </button>
+                    </>
+                  ) : null}
                 </section>
               ) : null}
             </>
