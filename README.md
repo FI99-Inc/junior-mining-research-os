@@ -104,3 +104,7 @@ Visual asset provenance and third-party attributions are documented in [ASSET-LI
 - Registry company and management fields provide search and display context; they do not create evidence, citations, or evidence-confidence gains by themselves.
 - Test-only synthetic evidence lives under `tests/` and is never imported by the application or server runtime.
 - The separate fictional demo fixture is reachable only through explicit demo mode, is visibly labeled, and cannot enter live research or live scoring.
+
+## License
+
+Project-authored source code is available under the [MIT License](LICENSE). Third-party dependencies and assets remain subject to their own licenses, as documented in [ASSET-LICENSES.md](ASSET-LICENSES.md). External market data, regulatory filings, issuer materials, and linked third-party content are not redistributed or relicensed under the project's MIT License.
