@@ -82,6 +82,16 @@ pnpm check
 
 `check` runs strict typechecking, the complete Vitest suite, and the production build.
 
+## Optional live freshness audit
+
+Run the supported market and financial freshness audit with:
+
+```sh
+pnpm audit:freshness
+```
+
+This optional command starts a temporary local API and contacts the live external providers for every supported company. It can take time, and its results vary as provider data and availability change. Structured JSON is written to stdout, while progress is written to stderr. Provider and company-request failures are reported explicitly and cause a nonzero exit code rather than being hidden. The audit is not part of `pnpm check` or CI, and its output is not investment advice.
+
 ## Architecture
 
 - `src/App.tsx`: report workspace and interaction state.
@@ -94,7 +104,7 @@ pnpm check
 - `server/demoFixture.ts`: deterministic fictional data used only when demo mode is explicitly active.
 - `tests/`: API, domain, evidence, adapter, and rendered-component coverage.
 
-Research runs are stored in process memory and are cleared when the API restarts. Issuer websites and public data providers can be blocked, unavailable, stale, incomplete, or structurally changed; the UI preserves those gaps for diligence. See [external-integrations.md](docs/external-integrations.md), [market-data.md](docs/market-data.md), and [cleanup-audit.md](docs/cleanup-audit.md) for provider and maintenance details.
+Research runs are stored in process memory and are cleared when the API restarts. Issuer websites and public data providers can be blocked, unavailable, stale, incomplete, or structurally changed; the UI preserves those gaps for diligence. See [external-integrations.md](docs/external-integrations.md), [market-data.md](docs/market-data.md), and [dependency-security.md](docs/dependency-security.md) for provider, market-data, and dependency-security details.
 
 Visual asset provenance and third-party attributions are documented in [ASSET-LICENSES.md](ASSET-LICENSES.md). The application does not hotlink portraits or background images.
 
