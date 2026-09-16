@@ -1554,7 +1554,7 @@ function buildManagementEvidence(
   const gaps = [
     people.length <= 1 || roleCoverage.covered < 2 ? "Full executive, board, technical, advisor, and project-lead roster still needs discovery." : undefined,
     !hasSourcedRoster ? "Roster needs issuer, filing, or circular evidence before confidence can rise above low." : undefined,
-    usableLinkedInCount === 0 ? "No verified or likely LinkedIn profiles are available for this run." : undefined,
+    usableLinkedInCount === 0 ? "No source-supported or discovered public profile links are available for this run." : undefined,
     priorOutcomes.status !== "positive" ? "Prior discoveries, mine builds, financings, and public-company outcomes need more cited support." : undefined,
     technicalCredibility.status === "gap" ? "Technical credentials, qualified-person evidence, or directly relevant project-stage experience needs support." : undefined,
     capitalAllocation.status !== "positive" ? "Insider ownership, option grants, and financing/capital-allocation history are not yet independently sourced." : undefined
@@ -1584,9 +1584,9 @@ function buildManagementEvidence(
     },
     {
       id: "verified-profiles",
-      label: "LinkedIn profile coverage",
+      label: "Public profile link coverage",
       status: verifiedLinkedInCount && hasSourcedRoster ? ("positive" as const) : likelyLinkedInCount || verifiedLinkedInCount ? ("watch" as const) : ("gap" as const),
-      detail: `${verifiedLinkedInCount} verified and ${likelyLinkedInCount} likely LinkedIn/public profile${usableLinkedInCount === 1 ? "" : "s"} are available.`,
+      detail: `${verifiedLinkedInCount} source-supported and ${likelyLinkedInCount} discovered public profile link${usableLinkedInCount === 1 ? "" : "s"} are available.`,
       sourceIds: linkedInCandidates.flatMap((candidate) => candidate.sourceIds)
     },
     {
@@ -1614,8 +1614,8 @@ function buildManagementEvidence(
     gaps,
     summary:
       people.length && personSources.length
-        ? `${company.name}'s management read is based on ${people.length} structured profile${people.length === 1 ? "" : "s"}, ${trackRecord.length} track-record signal${trackRecord.length === 1 ? "" : "s"}, ${verifiedLinkedInCount} verified LinkedIn/public profile${verifiedLinkedInCount === 1 ? "" : "s"}, and ${likelyLinkedInCount} likely profile${likelyLinkedInCount === 1 ? "" : "s"}.`
-        : "Management quality remains a key diligence item. The app could not verify a complete roster, LinkedIn profile set, insider alignment, or prior outcomes from current evidence."
+        ? `${company.name}'s management read is based on ${people.length} structured profile${people.length === 1 ? "" : "s"}, ${trackRecord.length} track-record signal${trackRecord.length === 1 ? "" : "s"}, ${verifiedLinkedInCount} source-supported public profile link${verifiedLinkedInCount === 1 ? "" : "s"}, and ${likelyLinkedInCount} discovered profile link${likelyLinkedInCount === 1 ? "" : "s"}.`
+        : "Management quality remains a key diligence item. The app could not establish a complete sourced roster, public profile-link set, insider alignment, or prior outcomes from current evidence."
   };
 }
 

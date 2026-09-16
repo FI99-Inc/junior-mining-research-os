@@ -86,7 +86,7 @@ describe("App", () => {
         adapters: [
           {
             id: "sec-edgar-live",
-            name: "SEC EDGAR automated discovery",
+            name: "SEC EDGAR filing retrieval",
             status: "configured",
             note: "Resolved CIK and discovered recent SEC filings.",
             contributes: ["recent filing URLs"],
@@ -153,7 +153,7 @@ describe("App", () => {
     expect(screen.getByText(/Market snapshot/i)).toBeInTheDocument();
     expect(screen.getByRole("region", { name: /Research Collection Status/i })).toBeInTheDocument();
     expect(screen.getByText(/Click to review adapters/i)).toBeInTheDocument();
-    expect(screen.queryByText(/SEC EDGAR automated discovery/i)).not.toBeVisible();
+    expect(screen.queryByText(/SEC EDGAR filing retrieval/i)).not.toBeVisible();
     expect(screen.getAllByText(/Current price/i).length).toBeGreaterThan(0);
     expect(screen.getByText(/52-week high/i)).toBeInTheDocument();
     expect(screen.getByText(/52-week low/i)).toBeInTheDocument();
@@ -168,7 +168,7 @@ describe("App", () => {
     expect(screen.getByText(/Scoring methodology/i)).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /NI 43-101/i })).not.toBeVisible();
     await userEvent.click(screen.getByText(/Research Collection Status/i));
-    expect(screen.getByText(/SEC EDGAR automated discovery/i)).toBeVisible();
+    expect(screen.getByText(/SEC EDGAR filing retrieval/i)).toBeVisible();
     expect(screen.getAllByText(/Technical report \/ project disclosure/i).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Fully diluted shares/i).length).toBeGreaterThan(0);
     await userEvent.click(screen.getByText(/Junior Mining Feasibility Framework/i));
@@ -202,7 +202,8 @@ describe("App", () => {
     await userEvent.click(screen.getByRole("button", { name: /news/i }));
     expect(screen.getByText(/News and Catalysts/i)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /read source/i })).toBeInTheDocument();
-    expect(screen.getByText(/Future news pipeline/i)).toBeInTheDocument();
+    expect(screen.getByText(/External mining-news references/i)).toBeInTheDocument();
+    expect(screen.getByText(/not automated feeds/i)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Junior Mining Network/i })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /TMX Newsfile/i })).toBeInTheDocument();
     expect(screen.getAllByLabelText(/news source logo/i).length).toBeGreaterThanOrEqual(5);
@@ -212,7 +213,8 @@ describe("App", () => {
     expect(screen.getByText(/Management Team/i)).toBeInTheDocument();
     expect(screen.getAllByText(/Track record/i).length).toBeGreaterThan(0);
     expect(screen.getByText(/Management intelligence/i)).toBeInTheDocument();
-    expect(screen.getAllByText(/LinkedIn verified|LinkedIn likely match|LinkedIn needs review/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Profile link supplied|Profile link discovered|Profile link unavailable/i).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/LinkedIn verified|LinkedIn likely match|LinkedIn needs review/i)).not.toBeInTheDocument();
     expect(screen.getAllByText(/Key background/i).length).toBeGreaterThan(0);
     const firstBackground = screen.getAllByText(/Key background/i)[0].closest(".management-highlights") as HTMLElement | null;
     if (!firstBackground) throw new Error("Missing management highlights");
@@ -221,7 +223,7 @@ describe("App", () => {
     screen.queryAllByText(/Diligence checklist/i).forEach((item) => expect(item).not.toBeVisible());
     await userEvent.click(screen.getAllByText(/Read full profile/i)[0]);
     expect(screen.getAllByText(/Diligence checklist/i)[0]).toBeVisible();
-    expect(screen.getAllByRole("link", { name: /LinkedIn/i }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("link", { name: /Public profile link/i }).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Coffee Gold Deposit/i).length).toBeGreaterThan(0);
 
     await userEvent.click(screen.getByRole("button", { name: /share structure/i }));

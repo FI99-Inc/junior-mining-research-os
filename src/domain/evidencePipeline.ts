@@ -14,8 +14,13 @@ import { sourceAdapterStatuses } from "./sourceAdapters";
 const retrievedAt = () => new Date().toISOString();
 const SEC_TICKERS_URL = "https://www.sec.gov/files/company_tickers.json";
 const SEC_SUBMISSIONS_URL = (cik: string) => `https://data.sec.gov/submissions/CIK${cik}.json`;
-const SEDAR_SEARCH_URL = "https://www.sedarplus.ca/";
 const GLOBENEWSWIRE_RSS_URL = "https://www.globenewswire.com/rss/news-releases.xml";
+const SEC_DEFAULT_REQUEST_INTERVAL_MS = 125;
+const MAX_TEAM_PAGES = 12;
+const MAX_NEWS_DISCOVERY_PAGES = 8;
+const MAX_NEWS_ARTICLES = 8;
+const MAX_NEWSWIRE_ITEMS = 6;
+const RETRYABLE_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504]);
 
 const CATEGORY_LABELS: Record<EvidenceFactCategory, string> = {
   technical_report: "Technical report / project disclosure",
@@ -70,6 +75,9 @@ interface EvidenceOptions {
   fetchTimeoutMs?: number;
   signal?: AbortSignal;
   now?: () => string;
+  secUserAgent?: string;
+  secRequestIntervalMs?: number;
+  sleep?: (milliseconds: number) => Promise<void>;
 }
 
 type Fetcher = typeof fetch;
@@ -84,6 +92,83 @@ export function createTimeoutFetcher(fetcher: Fetcher, timeoutMs = 8000, signal?
     combined.throwIfAborted();
     return fetcher(input, { ...init, signal: combined });
   };
+}
+
+const defaultSleep = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
+
+function isValidSecUserAgent(value: string | undefined) {
+  return Boolean(value?.trim().match(/^\S(?:.*\S)?\s+[^\s@]+@[^\s@]+\.[^\s@]+$/));
+}
+
+function retryDelay(response: Response | undefined, attempt: number) {
+  const retryAfter = response?.headers.get("Retry-After");
+  if (retryAfter) {
+    const seconds = Number(retryAfter);
+    if (Number.isFinite(seconds)) return Math.min(Math.max(seconds * 1000, 0), 5000);
+    const dateDelay = Date.parse(retryAfter) - Date.now();
+    if (Number.isFinite(dateDelay)) return Math.min(Math.max(dateDelay, 0), 5000);
+  }
+  return Math.min(250 * 2 ** attempt, 2000);
+}
+
+async function fetchWithRetry(
+  fetcher: Fetcher,
+  input: RequestInfo | URL,
+  init: RequestInit | undefined,
+  options: {
+    attempts: number;
+    sleep: (milliseconds: number) => Promise<void>;
+    beforeAttempt?: () => Promise<void>;
+  }
+) {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < options.attempts; attempt += 1) {
+    await options.beforeAttempt?.();
+    try {
+      const response = await fetcher(input, init);
+      if (!RETRYABLE_STATUS_CODES.has(response.status) || attempt === options.attempts - 1) return response;
+      await response.body?.cancel().catch(() => undefined);
+      await options.sleep(retryDelay(response, attempt));
+    } catch (error) {
+      lastError = error;
+      if (init?.signal?.aborted || attempt === options.attempts - 1) throw error;
+      await options.sleep(retryDelay(undefined, attempt));
+    }
+  }
+  throw lastError;
+}
+
+let secRequestQueue = Promise.resolve();
+let lastSecRequestStartedAt = 0;
+
+async function waitForSecRequestSlot(intervalMs: number, sleep: (milliseconds: number) => Promise<void>) {
+  let release: () => void = () => undefined;
+  const previous = secRequestQueue;
+  secRequestQueue = new Promise<void>((resolve) => { release = resolve; });
+  await previous;
+  try {
+    const waitMs = Math.max(0, lastSecRequestStartedAt + intervalMs - Date.now());
+    if (waitMs) await sleep(waitMs);
+    lastSecRequestStartedAt = Date.now();
+  } finally {
+    release();
+  }
+}
+
+function externalFailureNote(provider: string, error: unknown) {
+  if (error instanceof DOMException && error.name === "TimeoutError") {
+    return `${provider} timed out during this run.`;
+  }
+  const httpStatus = error instanceof Error ? error.message.match(/HTTP (\d{3})/i)?.[1] : undefined;
+  if (httpStatus) {
+    return `${provider} returned HTTP ${httpStatus} during this run.`;
+  }
+  return `${provider} was blocked or unavailable during this run.`;
+}
+
+function requireSuccessfulResponse(response: Response, provider: string) {
+  if (!response.ok) throw new Error(`${provider} returned HTTP ${response.status}`);
+  return response;
 }
 
 export interface BrowserPageResult {
@@ -577,21 +662,56 @@ function excerptsFromRetrievedDocument(rawDocument: string) {
   return (relevant.length ? relevant : sentences).slice(0, 6).map((sentence) => sentence.slice(0, 900));
 }
 
-async function collectSecEvidence(company: CompanyCandidate, fetcher: Fetcher, now: string): Promise<AdapterEvidenceResult> {
+async function collectSecEvidence(
+  company: CompanyCandidate,
+  fetcher: Fetcher,
+  now: string,
+  options: Pick<EvidenceOptions, "secUserAgent" | "secRequestIntervalMs" | "sleep">
+): Promise<AdapterEvidenceResult> {
   const sources: SourceDocument[] = [];
   const adapters: AdapterStatus[] = [];
+  let filingDocumentsRead = 0;
+  let filingDocumentFailures = 0;
   if (company.country !== "US") return { sources, adapters };
+  if (!isValidSecUserAgent(options.secUserAgent)) {
+    return {
+      sources,
+      adapters: [
+        {
+          id: "sec-edgar-live",
+          name: "SEC EDGAR filing retrieval",
+          status: "needs_configuration",
+          note: "SEC requests were skipped because SEC_USER_AGENT must contain an application name and contact email address.",
+          contributes: ["official U.S. filing retrieval when configured"],
+          missing: ["SEC_USER_AGENT", "CIK resolution", "recent filing documents"]
+        }
+      ]
+    };
+  }
+
+  const sleep = options.sleep ?? defaultSleep;
+  const intervalMs = options.secRequestIntervalMs ?? SEC_DEFAULT_REQUEST_INTERVAL_MS;
+  const secFetcher: Fetcher = (input, init) => fetchWithRetry(fetcher, input, {
+    ...init,
+    headers: {
+      Accept: "application/json, text/html;q=0.9, */*;q=0.8",
+      ...Object.fromEntries(new Headers(init?.headers).entries()),
+      "User-Agent": options.secUserAgent!
+    }
+  }, {
+    attempts: 3,
+    sleep,
+    beforeAttempt: () => waitForSecRequestSlot(intervalMs, sleep)
+  });
 
   try {
-    const tickersResponse = await fetcher(SEC_TICKERS_URL);
-    if (!tickersResponse.ok) throw new Error("SEC ticker lookup failed");
+    const tickersResponse = requireSuccessfulResponse(await secFetcher(SEC_TICKERS_URL), "SEC ticker lookup");
     const tickers = (await tickersResponse.json()) as Record<string, { cik_str?: number; ticker?: string; title?: string }>;
     const match = Object.values(tickers).find((item) => item.ticker?.toUpperCase() === company.ticker.toUpperCase());
     if (!match?.cik_str) throw new Error("CIK not found");
     const cik = String(match.cik_str).padStart(10, "0");
     const submissionsUrl = SEC_SUBMISSIONS_URL(cik);
-    const submissionsResponse = await fetcher(submissionsUrl);
-    if (!submissionsResponse.ok) throw new Error("SEC submissions lookup failed");
+    const submissionsResponse = requireSuccessfulResponse(await secFetcher(submissionsUrl), "SEC submissions lookup");
     const submissions = (await submissionsResponse.json()) as {
       filings?: { recent?: { accessionNumber?: string[]; primaryDocument?: string[]; form?: string[]; filingDate?: string[] } };
     };
@@ -609,9 +729,15 @@ async function collectSecEvidence(company: CompanyCandidate, fetcher: Fetcher, n
       const url = `https://www.sec.gov/Archives/edgar/data/${Number(match.cik_str)}/${accessionPath}/${document}`;
       let excerpts: string[] = [];
       try {
-        const documentResponse = await fetcher(url);
-        if (documentResponse.ok) excerpts = excerptsFromRetrievedDocument(await safeText(documentResponse));
+        const documentResponse = await secFetcher(url);
+        if (documentResponse.ok) {
+          filingDocumentsRead += 1;
+          excerpts = excerptsFromRetrievedDocument(await safeText(documentResponse));
+        } else {
+          filingDocumentFailures += 1;
+        }
       } catch {
+        filingDocumentFailures += 1;
         excerpts = [];
       }
       if (!excerpts.length) continue;
@@ -627,18 +753,21 @@ async function collectSecEvidence(company: CompanyCandidate, fetcher: Fetcher, n
     }
     adapters.push({
       id: "sec-edgar-live",
-      name: "SEC EDGAR automated discovery",
+      name: "SEC EDGAR filing retrieval",
       status: "configured",
-      note: `Resolved CIK and retrieved ${sources.length} recent SEC filing document${sources.length === 1 ? "" : "s"} through official SEC endpoints.`,
+      note: `Resolved CIK, read ${filingDocumentsRead} recent SEC filing document${filingDocumentsRead === 1 ? "" : "s"}, and retained ${sources.length} with relevant excerpts.`,
       contributes: ["CIK resolution", "retrieved filing documents", "insider filing documents when available"],
-      missing: sources.length ? ["structured filing table extraction", "S-K 1300 table parsing"] : ["retrievable filing document bodies"]
+      missing: [
+        ...(sources.length ? ["structured filing table extraction", "S-K 1300 table parsing"] : ["retrievable filing document bodies"]),
+        ...(filingDocumentFailures ? [`${filingDocumentFailures} filing document request${filingDocumentFailures === 1 ? "" : "s"} failed`] : [])
+      ]
     });
-  } catch {
+  } catch (error) {
     adapters.push({
       id: "sec-edgar-live",
-      name: "SEC EDGAR automated discovery",
-      status: "needs_key",
-      note: "SEC discovery did not return usable live filing data for this run.",
+      name: "SEC EDGAR filing retrieval",
+      status: "unavailable",
+      note: externalFailureNote("SEC EDGAR", error),
       contributes: ["official U.S. filing discovery"],
       missing: ["CIK resolution", "recent filing URLs", "insider ownership forms"]
     });
@@ -646,39 +775,21 @@ async function collectSecEvidence(company: CompanyCandidate, fetcher: Fetcher, n
   return { sources, adapters };
 }
 
-async function collectSedarEvidence(company: CompanyCandidate, fetcher: Fetcher): Promise<AdapterEvidenceResult> {
+async function collectSedarEvidence(company: CompanyCandidate): Promise<AdapterEvidenceResult> {
   if (company.country !== "CA") return { sources: [] as SourceDocument[], adapters: [] as AdapterStatus[] };
-  try {
-    const response = await fetcher(SEDAR_SEARCH_URL);
-    if (!response.ok) throw new Error("SEDAR+ unavailable");
-    return {
-      sources: [],
-      adapters: [
-        {
-          id: "sedar-plus-live",
-          name: "SEDAR+ automated discovery",
-          status: "configured" as const,
-          note: "SEDAR+ was reachable, but no issuer document was retrieved during this run, so no SEDAR+ evidence was added.",
-          contributes: ["Canadian disclosure portal availability"],
-          missing: ["issuer-specific document discovery", "document-level SEDAR+ download", "NI 43-101 PDF parsing"]
-        }
-      ]
-    };
-  } catch {
-    return {
-      sources: [] as SourceDocument[],
-      adapters: [
-        {
-          id: "sedar-plus-live",
-          name: "SEDAR+ automated discovery",
-          status: "needs_key" as const,
-          note: "SEDAR+ direct discovery was not available through fetch; browser-assisted discovery should be used later.",
-          contributes: ["Canadian disclosure discovery path"],
-          missing: ["technical reports", "MD&A", "financial statements", "management circulars"]
-        }
-      ]
-    };
-  }
+  return {
+    sources: [],
+    adapters: [
+      {
+        id: "sedar-plus-reference",
+        name: "SEDAR+ public disclosure reference",
+        status: "manual",
+        note: "SEDAR+ is provided as a public research link only; no automated filing discovery or document retrieval ran.",
+        contributes: ["manual Canadian disclosure research path"],
+        missing: ["issuer-specific document discovery", "document-level retrieval", "NI 43-101 PDF parsing"]
+      }
+    ]
+  };
 }
 
 async function collectCompanyWebsiteEvidence(
@@ -695,6 +806,7 @@ async function collectCompanyWebsiteEvidence(
     let usedBrowser = false;
     let usedFetchFallback = false;
     let browserFailures = 0;
+    let requestFailures = 0;
 
     if (browserFetcher) {
       const browserHomepage = await browserFetcher(company.websiteUrl, { timeoutMs: 8000 });
@@ -711,8 +823,7 @@ async function collectCompanyWebsiteEvidence(
     }
 
     if (!homepageHtml) {
-      const response = await fetcher(company.websiteUrl);
-      if (!response.ok) throw new Error("Company website unavailable");
+      const response = requireSuccessfulResponse(await fetcher(company.websiteUrl), "Company website");
       homepageHtml = await safeText(response);
       homepageLinks = extractAnchorLinks(homepageHtml, company.websiteUrl);
       usedFetchFallback = Boolean(browserFetcher);
@@ -730,7 +841,7 @@ async function collectCompanyWebsiteEvidence(
     const teamLinks: Array<{ href: string; title: string; sectionType: IssuerTeamGroup }> = links
       .map((link) => ({ ...link, sectionType: teamSectionType(link.href, link.title) }))
       .filter((link): link is { href: string; title: string; sectionType: IssuerTeamGroup } => Boolean(link.sectionType))
-      .slice(0, 12);
+      .slice(0, MAX_TEAM_PAGES);
     const teamPageResults: Array<{
       link: { href: string; title: string; sectionType: IssuerTeamGroup };
       people: IssuerTeamPerson[];
@@ -753,11 +864,14 @@ async function collectCompanyWebsiteEvidence(
 
       try {
         const pageResponse = await fetcher(link.href);
-        if (!pageResponse.ok) throw new Error("Team page unavailable");
+        if (!pageResponse.ok) {
+          throw new Error(`Team page returned HTTP ${pageResponse.status}`);
+        }
         const pageHtml = await safeText(pageResponse);
         usedFetchFallback = usedFetchFallback || Boolean(browserFetcher);
         teamPageResults.push({ link, people: extractIssuerTeamPeople(pageHtml, link.href, link.sectionType), mode: "fetch" });
       } catch {
+        requestFailures += 1;
         teamPageResults.push({ link, people: [] as IssuerTeamPerson[], mode: homepageMode });
       }
     }
@@ -798,22 +912,23 @@ async function collectCompanyWebsiteEvidence(
           missing: links.length
             ? [
                 "PDF text extraction for discovered links",
-                peopleFound ? "LinkedIn reconciliation for issuer-sourced people" : "parseable management or board profile pages",
-                ...(browserFailures ? [`${browserFailures} rendered page fetch attempt${browserFailures === 1 ? "" : "s"} failed`] : [])
+                peopleFound ? "public profile link reconciliation for issuer-sourced people" : "parseable management or board profile pages",
+                ...(browserFailures ? [`${browserFailures} rendered page fetch attempt${browserFailures === 1 ? "" : "s"} failed`] : []),
+                ...(requestFailures ? [`${requestFailures} bounded fetch request${requestFailures === 1 ? "" : "s"} failed`] : [])
               ]
             : ["issuer document links", "management and governance links"]
         }
       ]
     };
-  } catch {
+  } catch (error) {
     return {
       sources: [] as SourceDocument[],
       adapters: [
         {
           id: "company-website",
           name: "Company website crawler",
-          status: "needs_key" as const,
-          note: "Company website could not be fetched during this run.",
+          status: "unavailable" as const,
+          note: externalFailureNote("Company website", error),
           contributes: ["issuer presentations", "technical reports", "company news"],
           missing: ["website document discovery"]
         }
@@ -842,21 +957,12 @@ async function collectManagementDiscoveryEvidence(company: CompanyCandidate): Pr
       },
       {
         id: "linkedin-candidate-discovery",
-        name: "LinkedIn candidate discovery",
-        status: people.some((person) => person.linkedInUrl && person.sourceUrl) ? "configured" : "manual",
+        name: "Public profile link context",
+        status: "manual",
         note:
-          "LinkedIn profiles use a three-tier status: Verified, Likely match, or Needs review. Likely matches can display for coverage but remain conservative in scoring.",
-        contributes: ["verified profile display", "likely profile coverage", "needs-review profile gaps"],
-        missing: ["live LinkedIn candidate search at app runtime", "runtime Composio or LinkedIn provider configuration"]
-      },
-      {
-        id: "composio-management-search",
-        name: "Composio public management search",
-        status: "needs_key",
-        note:
-          "Backend adapter boundary is reserved for Composio web search, but runtime provider credentials are not configured in this app process yet.",
-        contributes: ["public web discovery for leadership, board, LinkedIn, and prior outcomes"],
-        missing: ["runtime Composio API credential", "search-result persistence", "candidate review queue"]
+          "LinkedIn URLs are supplied or discovered public profile links. The app does not query LinkedIn or verify current profile content.",
+        contributes: ["public profile links supplied by registry data or retrieved issuer pages"],
+        missing: ["live LinkedIn search", "current LinkedIn profile verification"]
       }
     ]
   };
@@ -921,11 +1027,13 @@ async function collectIssuerNewsEvidence(
   if (!company.websiteUrl) return { sources: [], adapters: [] };
   const sources: SourceDocument[] = [];
   let browserFailures = 0;
+  let requestFailures = 0;
+  let successfulPages = 0;
   let usedBrowser = false;
   let usedFetchFallback = false;
 
   try {
-    const discoveryPages = dedupeLinks([{ title: "Company homepage", href: company.websiteUrl }, ...likelyCompanyNewsLinks(company.websiteUrl)]).slice(0, 8);
+    const discoveryPages = dedupeLinks([{ title: "Company homepage", href: company.websiteUrl }, ...likelyCompanyNewsLinks(company.websiteUrl)]).slice(0, MAX_NEWS_DISCOVERY_PAGES);
     const articleCandidates: Array<{ href: string; title: string }> = [];
 
     for (const pageLink of discoveryPages) {
@@ -934,6 +1042,7 @@ async function collectIssuerNewsEvidence(
         const rendered = await browserFetcher(pageLink.href, { timeoutMs: 8000 });
         if (rendered.ok && rendered.html) {
           usedBrowser = true;
+          successfulPages += 1;
           page = rendered;
         } else {
           browserFailures += 1;
@@ -943,8 +1052,12 @@ async function collectIssuerNewsEvidence(
       if (!page) {
         try {
           const response = await fetcher(pageLink.href);
-          if (!response.ok) continue;
+          if (!response.ok) {
+            requestFailures += 1;
+            continue;
+          }
           const html = await safeText(response);
+          successfulPages += 1;
           usedFetchFallback = usedFetchFallback || Boolean(browserFetcher);
           page = {
             url: pageLink.href,
@@ -957,6 +1070,7 @@ async function collectIssuerNewsEvidence(
             ok: true
           };
         } catch {
+          requestFailures += 1;
           continue;
         }
       }
@@ -969,13 +1083,14 @@ async function collectIssuerNewsEvidence(
       );
     }
 
-    const articleLinks = dedupeLinks(articleCandidates).slice(0, 8);
+    const articleLinks = dedupeLinks(articleCandidates).slice(0, MAX_NEWS_ARTICLES);
     for (const [index, link] of articleLinks.entries()) {
       let page: BrowserPageResult | undefined;
       if (browserFetcher) {
         const rendered = await browserFetcher(link.href, { timeoutMs: 8000 });
         if (rendered.ok && rendered.html) {
           usedBrowser = true;
+          successfulPages += 1;
           page = rendered;
         } else {
           browserFailures += 1;
@@ -985,8 +1100,12 @@ async function collectIssuerNewsEvidence(
       if (!page) {
         try {
           const response = await fetcher(link.href);
-          if (!response.ok) continue;
+          if (!response.ok) {
+            requestFailures += 1;
+            continue;
+          }
           const html = await safeText(response);
+          successfulPages += 1;
           usedFetchFallback = usedFetchFallback || Boolean(browserFetcher);
           page = {
             url: link.href,
@@ -999,6 +1118,7 @@ async function collectIssuerNewsEvidence(
             ok: true
           };
         } catch {
+          requestFailures += 1;
           continue;
         }
       }
@@ -1034,26 +1154,28 @@ async function collectIssuerNewsEvidence(
         {
           id: "issuer-news-browser",
           name: "Issuer website news browser crawler",
-          status: "configured",
-          note: `${modeLabel}. Checked ${discoveryPages.length} issuer news/home page${discoveryPages.length === 1 ? "" : "s"} and collected ${sources.length} article source${sources.length === 1 ? "" : "s"}.`,
+          status: successfulPages ? "configured" : "unavailable",
+          note: successfulPages
+            ? `${modeLabel}. Retrieved ${successfulPages} bounded issuer page${successfulPages === 1 ? "" : "s"} and collected ${sources.length} article source${sources.length === 1 ? "" : "s"}.`
+            : "Issuer website news pages were blocked, timed out, or unavailable during this run.",
           contributes: ["issuer news releases", "media posts", "drill result updates", "financing and project news"],
-          missing: sources.length
-            ? browserFailures
-              ? [`${browserFailures} rendered news page fetch attempt${browserFailures === 1 ? "" : "s"} failed`]
-              : []
-            : ["issuer-specific rendered news articles"]
+          missing: [
+            ...(!sources.length ? ["issuer-specific rendered news articles"] : []),
+            ...(browserFailures ? [`${browserFailures} rendered news page fetch attempt${browserFailures === 1 ? "" : "s"} failed`] : []),
+            ...(requestFailures ? [`${requestFailures} bounded fetch request${requestFailures === 1 ? "" : "s"} failed`] : [])
+          ]
         }
       ]
     };
-  } catch {
+  } catch (error) {
     return {
       sources: [],
       adapters: [
         {
           id: "issuer-news-browser",
           name: "Issuer website news browser crawler",
-          status: "needs_key",
-          note: "Issuer website news could not be collected during this run.",
+          status: "unavailable",
+          note: externalFailureNote("Issuer website news", error),
           contributes: ["issuer news releases", "media posts"],
           missing: ["rendered issuer news discovery"]
         }
@@ -1062,10 +1184,17 @@ async function collectIssuerNewsEvidence(
   }
 }
 
-async function collectNewswireEvidence(company: CompanyCandidate, fetcher: Fetcher, now: string): Promise<AdapterEvidenceResult> {
+async function collectNewswireEvidence(
+  company: CompanyCandidate,
+  fetcher: Fetcher,
+  now: string,
+  sleep: (milliseconds: number) => Promise<void>
+): Promise<AdapterEvidenceResult> {
   try {
-    const response = await fetcher(GLOBENEWSWIRE_RSS_URL);
-    if (!response.ok) throw new Error("Newswire feed unavailable");
+    const response = requireSuccessfulResponse(
+      await fetchWithRetry(fetcher, GLOBENEWSWIRE_RSS_URL, undefined, { attempts: 2, sleep }),
+      "GlobeNewswire RSS"
+    );
     const rss = await safeText(response);
     const items = Array.from(rss.matchAll(/<item>([\s\S]*?)<\/item>/gi))
       .map((match) => {
@@ -1080,7 +1209,7 @@ async function collectNewswireEvidence(company: CompanyCandidate, fetcher: Fetch
         const haystack = `${item.title} ${item.description}`.toLowerCase();
         return [company.ticker, company.name, ...(company.aliases ?? [])].some((term) => haystack.includes(term.toLowerCase().replace(/\.(v|to)$/i, "")));
       })
-      .slice(0, 6);
+      .slice(0, MAX_NEWSWIRE_ITEMS);
     const sources: SourceDocument[] = items.map((item, index) => ({
         id: `newswire-${company.id}-${index}-${slug(item.title)}`,
         title: item.title,
@@ -1103,15 +1232,15 @@ async function collectNewswireEvidence(company: CompanyCandidate, fetcher: Fetch
         }
       ]
     };
-  } catch {
+  } catch (error) {
     return {
       sources: [] as SourceDocument[],
       adapters: [
         {
           id: "newswire-rss",
           name: "Newswire RSS discovery",
-          status: "needs_key" as const,
-          note: "Newswire RSS could not be fetched during this run.",
+          status: "unavailable" as const,
+          note: externalFailureNote("GlobeNewswire RSS", error),
           contributes: ["issuer news discovery"],
           missing: ["drill result news", "financing announcements", "technical updates"]
         }
@@ -1181,13 +1310,14 @@ export async function collectEvidence(company: CompanyCandidate, options: Eviden
   const browserFetcher = rawBrowserFetcher ? cachedBrowserFetcher(rawBrowserFetcher) : undefined;
   try {
     const now = options.now?.() ?? retrievedAt();
+    const sleep = options.sleep ?? defaultSleep;
     // Let every adapter settle before closing the browser shared by this run.
     const results = await Promise.allSettled([
-      collectSecEvidence(company, fetcher, now),
-      collectSedarEvidence(company, fetcher),
+      collectSecEvidence(company, fetcher, now, options),
+      collectSedarEvidence(company),
       collectCompanyWebsiteEvidence(company, fetcher, now, browserFetcher),
       collectIssuerNewsEvidence(company, fetcher, now, browserFetcher),
-      collectNewswireEvidence(company, fetcher, now),
+      collectNewswireEvidence(company, fetcher, now, sleep),
       collectManagementDiscoveryEvidence(company)
     ]);
     const collected = results.map((result) => {

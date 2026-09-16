@@ -34,6 +34,8 @@ Open `http://127.0.0.1:5173/`. The Vite server proxies `/api` requests to the Ex
 
 The optional `PORT` setting changes the API port from `4173`. If changed, update the Vite proxy in `vite.config.ts` to match. No market-data API key is required.
 
+Automated SEC EDGAR retrieval is optional and requires a declared application contact. Set `SEC_USER_AGENT` in the shell that starts the API, using the format `Application Name contact@example.org`. Do not commit personal contact details to `.env.example` or source files. Without this setting, SEC collection is skipped and shown as needing configuration; the rest of the research run continues normally.
+
 ## Two-minute offline demo
 
 The demo uses one clearly fictional company and makes no Yahoo Finance, SEC, SEDAR+, newswire, issuer-site, or Playwright requests.
@@ -73,13 +75,13 @@ pnpm.cmd check
 - `src/api/researchApi.ts`: typed browser API requests and response-error handling.
 - `src/domain/companyResolver.ts`: supported company registry and search.
 - `src/domain/sourceAdapters.ts`: Yahoo Finance market, financial, forecast, and available ownership data.
-- `src/domain/evidencePipeline.ts`: SEC, SEDAR+, issuer-site, management, and news evidence collection.
+- `src/domain/evidencePipeline.ts`: optional SEC retrieval, SEDAR+ reference status, and bounded issuer-site, management, and news collection.
 - `src/domain/researchEngine.ts`: evidence-aware scoring and report generation.
 - `server/app.ts`: Express routes and research-run orchestration.
 - `server/demoFixture.ts`: deterministic fictional data used only when demo mode is explicitly active.
 - `tests/`: API, domain, evidence, adapter, and rendered-component coverage.
 
-Research runs are stored in process memory and are cleared when the API restarts. Issuer websites and public data providers can be unavailable, stale, or incomplete; the UI preserves those gaps for diligence. See [market-data.md](docs/market-data.md) and [cleanup-audit.md](docs/cleanup-audit.md) for provider and maintenance details.
+Research runs are stored in process memory and are cleared when the API restarts. Issuer websites and public data providers can be blocked, unavailable, stale, incomplete, or structurally changed; the UI preserves those gaps for diligence. See [external-integrations.md](docs/external-integrations.md), [market-data.md](docs/market-data.md), and [cleanup-audit.md](docs/cleanup-audit.md) for provider and maintenance details.
 
 Visual asset provenance and third-party attributions are documented in [ASSET-LICENSES.md](ASSET-LICENSES.md). The application does not hotlink portraits or background images.
 

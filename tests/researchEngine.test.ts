@@ -601,16 +601,13 @@ describe("createResearchRun", () => {
     expect(run.managementEvidence.gaps).toEqual(expect.arrayContaining([expect.stringContaining("issuer, filing, or circular evidence")]));
   });
 
-  it("describes source adapter contributions and missing data", () => {
+  it("keeps static adapter context limited to configured market data and manual import", () => {
     const adapters = sourceAdapterStatuses(candidate);
 
+    expect(adapters.some((adapter) => adapter.id === "sec-edgar")).toBe(false);
+    expect(adapters.some((adapter) => adapter.id === "sedar-plus")).toBe(false);
     expect(adapters).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({
-          id: "sec-edgar",
-          contributes: expect.arrayContaining([expect.stringContaining("filing")]),
-          missing: expect.arrayContaining([expect.any(String)])
-        }),
         expect.objectContaining({
           id: "market-data",
           contributes: expect.arrayContaining([expect.stringContaining("market")]),

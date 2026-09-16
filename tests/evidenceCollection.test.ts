@@ -123,7 +123,7 @@ describe("evidence resource lifecycle", () => {
     const result = await collectEvidence(company, { fetcher, browserFetcher, fetchTimeoutMs: 5 });
     expect(signals.length).toBeGreaterThan(0);
     expect(signals.every((signal) => signal.aborted)).toBe(true);
-    expect(result.status.adapters.find((adapter) => adapter.id === "company-website")?.status).toBe("needs_key");
+    expect(result.status.adapters.find((adapter) => adapter.id === "company-website")?.status).toBe("unavailable");
   });
 });
 
@@ -500,7 +500,11 @@ describe("collectEvidence", () => {
       return new Response("", { status: 404 });
     });
 
-    const result = await collectEvidence(company, { fetcher });
+    const result = await collectEvidence(company, {
+      fetcher,
+      secUserAgent: "Junior Mining Research OS research@example.invalid",
+      secRequestIntervalMs: 0
+    });
 
     expect(fetched).toContain("https://libertygold.ca/corporate/");
     expect(result.sources).toEqual(
@@ -804,7 +808,11 @@ describe("collectEvidence", () => {
       return new Response("", { status: 404 });
     });
 
-    const result = await collectEvidence(company, { fetcher });
+    const result = await collectEvidence(company, {
+      fetcher,
+      secUserAgent: "Junior Mining Research OS research@example.invalid",
+      secRequestIntervalMs: 0
+    });
 
     expect(result.sources).toEqual(
       expect.arrayContaining([
@@ -829,8 +837,105 @@ describe("collectEvidence", () => {
     expect(result.status.adapters.find((adapter) => adapter.id === "sec-edgar-live")?.status).toBe("configured");
     expect(result.status.adapters.find((adapter) => adapter.id === "management-roster")?.status).toBe("manual");
     expect(result.status.adapters.find((adapter) => adapter.id === "company-website")?.note).toMatch(/issuer team profile/i);
-    expect(result.status.adapters.find((adapter) => adapter.id === "linkedin-candidate-discovery")?.note).toMatch(/three-tier status/i);
-    expect(result.status.adapters.find((adapter) => adapter.id === "composio-management-search")?.status).toBe("needs_key");
+    expect(result.status.adapters.find((adapter) => adapter.id === "linkedin-candidate-discovery")?.note).toMatch(/supplied or discovered public profile links/i);
+    expect(result.status.adapters.some((adapter) => adapter.id === "composio-management-search")).toBe(false);
+  });
+
+  it("requires a declared SEC application and contact before making EDGAR requests", async () => {
+    const company = resolveCompany("USGO");
+    if (!company) throw new Error("Missing test company");
+    const fetcher = vi.fn(async (_input: RequestInfo | URL) => new Response("", { status: 503 }));
+
+    const result = await collectEvidence(company, { fetcher });
+
+    expect(fetcher.mock.calls.some(([input]) => /sec\.gov/i.test(String(input)))).toBe(false);
+    expect(result.status.adapters.find((adapter) => adapter.id === "sec-edgar-live")).toMatchObject({
+      status: "needs_configuration",
+      note: expect.stringMatching(/SEC_USER_AGENT/i)
+    });
+  });
+
+  it("identifies SEC requests and retries a throttled response with bounded backoff", async () => {
+    const company = resolveCompany("USGO");
+    if (!company) throw new Error("Missing test company");
+    let tickerAttempts = 0;
+    const delays: number[] = [];
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("company_tickers.json")) {
+        expect(new Headers(init?.headers).get("User-Agent")).toBe("Junior Mining Research OS research@example.invalid");
+        tickerAttempts += 1;
+        if (tickerAttempts === 1) return new Response("Rate limited", { status: 429, headers: { "Retry-After": "1" } });
+        return json({ 0: { cik_str: 1947244, ticker: "USGO", title: "US GOLDMINING INC." } });
+      }
+      if (url.includes("data.sec.gov/submissions/CIK0001947244.json")) {
+        expect(new Headers(init?.headers).get("User-Agent")).toBe("Junior Mining Research OS research@example.invalid");
+        return json({ filings: { recent: { accessionNumber: [], primaryDocument: [], form: [], filingDate: [] } } });
+      }
+      return new Response("", { status: 404 });
+    });
+
+    const result = await collectEvidence(company, {
+      fetcher,
+      secUserAgent: "Junior Mining Research OS research@example.invalid",
+      secRequestIntervalMs: 0,
+      sleep: async (milliseconds) => { delays.push(milliseconds); }
+    });
+
+    expect(tickerAttempts).toBe(2);
+    expect(delays).toContain(1000);
+    expect(result.status.adapters.find((adapter) => adapter.id === "sec-edgar-live")?.status).toBe("configured");
+  });
+
+  it("bounds GlobeNewswire retries and reports temporary feed failures as unavailable", async () => {
+    const company: CompanyCandidate = {
+      id: "newswire-policy-test",
+      name: "Policy Test Mining",
+      ticker: "PTM.V",
+      exchange: "TSXV",
+      country: "CA",
+      commodityFocus: ["Gold"]
+    };
+    let newswireAttempts = 0;
+    const fetcher: typeof fetch = vi.fn(async (input) => {
+      if (String(input).includes("globenewswire.com")) newswireAttempts += 1;
+      return new Response("Temporarily unavailable", { status: 503 });
+    });
+
+    const result = await collectEvidence(company, { fetcher, sleep: async () => undefined });
+
+    expect(newswireAttempts).toBe(2);
+    expect(result.status.adapters.find((adapter) => adapter.id === "newswire-rss")).toMatchObject({
+      status: "unavailable",
+      note: expect.stringMatching(/HTTP 503/i)
+    });
+  });
+
+  it("keeps issuer website collection within its documented request budget", async () => {
+    const company: CompanyCandidate = {
+      id: "issuer-budget-test",
+      name: "Issuer Budget Mining",
+      ticker: "IBM.V",
+      exchange: "TSXV",
+      country: "CA",
+      commodityFocus: ["Copper"],
+      websiteUrl: "https://issuer-budget.invalid/"
+    };
+    const links = Array.from({ length: 100 }, (_, index) =>
+      `<a href="/news/announces-drill-results-${index}">Announces drill results ${index}</a>`
+    ).join("");
+    let issuerRequests = 0;
+    const fetcher: typeof fetch = vi.fn(async (input) => {
+      if (String(input).startsWith(company.websiteUrl!)) {
+        issuerRequests += 1;
+        return html(`<main>${links}</main>`);
+      }
+      return html("<rss><channel></channel></rss>");
+    });
+
+    await collectEvidence(company, { fetcher, sleep: async () => undefined });
+
+    expect(issuerRequests).toBeLessThanOrEqual(29);
   });
 
   it("records Canadian SEDAR+ discovery gaps without inventing unsupported facts", async () => {
@@ -845,7 +950,12 @@ describe("collectEvidence", () => {
 
     const result = await collectEvidence(company, { fetcher });
 
-    expect(result.status.adapters.find((adapter) => adapter.id === "sedar-plus-live")?.status).toBe("needs_key");
+    expect(fetcher.mock.calls.some(([input]) => String(input).includes("sedarplus.ca"))).toBe(false);
+    expect(result.status.adapters.find((adapter) => adapter.id === "sedar-plus-reference")).toMatchObject({
+      name: "SEDAR+ public disclosure reference",
+      status: "manual",
+      note: expect.stringMatching(/no automated filing discovery/i)
+    });
     expect(result.status.categories.find((item) => item.id === "fully_diluted_shares")?.status).toBe("missing");
     expect(result.facts).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ category: "fully_diluted_shares" })])

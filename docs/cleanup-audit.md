@@ -45,7 +45,14 @@ Audit date: 2026-09-10. Scope: local repository and local application; no public
 ## Evidence provenance checkpoint
 
 - Removed fixed-date evidence, example URLs, and narrative source excerpts from production adapters.
-- SEC filing records become evidence only after the filing document body is retrieved; SEDAR+ reachability remains adapter status until an issuer document is available.
+- SEC filing records become evidence only after the filing document body is retrieved with a configured declared user agent. SEDAR+ is a manual public-disclosure reference; the app does not claim portal reachability or automated filing discovery.
 - Issuer links discovered during crawling remain status metadata until their pages are retrieved and parsed.
 - Registry management entries remain unverified display context and cannot raise management evidence confidence or scoring without current issuer, filing, or user-supplied support.
 - Reusable synthetic research scenarios are isolated under `tests/fixtures/`.
+
+## External integration hardening checkpoint
+
+- SEC access now requires `SEC_USER_AGENT`, uses a shared conservative request gate, and retries only rate limits and temporary failures with bounded backoff.
+- Issuer and GlobeNewswire requests are time-bounded and request-limited; blocked, timed-out, and unavailable states are distinct from missing configuration.
+- SEDAR+ is labeled as a public research link, Composio is absent from runtime adapter output, and LinkedIn URLs are described as supplied or discovered public profile links rather than live verification.
+- Yahoo Finance remains best-effort and non-filing-backed. Missing fields stay unavailable, and downloaded Yahoo responses are not committed or used as demo fixtures.

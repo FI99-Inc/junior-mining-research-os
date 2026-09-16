@@ -85,7 +85,7 @@ export interface EvidenceCollectionStatus {
 export interface AdapterStatus {
   id: string;
   name: string;
-  status: "configured" | "needs_key" | "manual";
+  status: "configured" | "needs_configuration" | "unavailable" | "manual";
   note: string;
   contributes: string[];
   missing: string[];

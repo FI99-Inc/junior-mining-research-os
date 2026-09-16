@@ -40,7 +40,7 @@ vi.mock("../src/domain/evidencePipeline", () => ({
         adapters: [
           {
             id: "sec-edgar-live",
-            name: "SEC EDGAR automated discovery",
+            name: "SEC EDGAR filing retrieval",
             status: "configured",
             note: "Test SEC evidence adapter.",
             contributes: ["recent filing URLs"],

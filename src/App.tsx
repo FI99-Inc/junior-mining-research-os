@@ -46,7 +46,8 @@ type TimelineHorizon = ResearchRun["scorecard"]["timelineScores"][number]["horiz
 
 const statusLabel: Record<AdapterStatus["status"], string> = {
   configured: "Configured",
-  needs_key: "Needs key",
+  needs_configuration: "Needs configuration",
+  unavailable: "Unavailable",
   manual: "Manual"
 };
 
@@ -60,7 +61,7 @@ function isHttpUrl(value: string) {
   }
 }
 
-const NEWS_PIPELINE_SOURCES = [
+const EXTERNAL_NEWS_REFERENCES = [
   {
     name: "Junior Mining Network",
     logo: "JMN",
@@ -1042,15 +1043,15 @@ function NewsPipelineSources() {
   return (
     <section className="news-pipeline">
       <div>
-        <p className="eyebrow">Future news pipeline</p>
-        <h3>Reliable mining news sources to connect</h3>
+        <p className="eyebrow">External mining-news references</p>
+        <h3>Additional public research links</h3>
         <p>
-          These sources are good candidates for the next news adapter so each company page can aggregate issuer releases,
-          sector headlines, and catalyst updates in one place.
+          These sites are optional outbound research references, not automated feeds. Availability, coverage, and page
+          structure are controlled by each third party.
         </p>
       </div>
       <div className="news-source-grid">
-        {NEWS_PIPELINE_SOURCES.map((source) => (
+        {EXTERNAL_NEWS_REFERENCES.map((source) => (
           <a href={source.url} target="_blank" rel="noreferrer" key={source.name}>
             <span className="news-source-logo" aria-label={`${source.name} news source logo`}>
               {source.logo}
@@ -1608,7 +1609,7 @@ export default function App() {
                                   </div>
                                   <div className="management-badges">
                                     <span>{person.sourceStatus === "issuer" ? "Issuer sourced" : person.sourceStatus === "filing" ? "Filing sourced" : person.sourceStatus === "candidate" ? "Candidate source" : "Needs source"}</span>
-                                    <span>{person.linkedInStatus === "verified" ? "LinkedIn verified" : person.linkedInStatus === "likely_match" ? "LinkedIn likely match" : "LinkedIn needs review"}</span>
+                                    <span>{person.linkedInStatus === "verified" ? "Profile link supplied" : person.linkedInStatus === "likely_match" ? "Profile link discovered" : "Profile link unavailable"}</span>
                                   </div>
                                   <div className="management-highlights">
                                     <span>Key background</span>
@@ -1657,10 +1658,10 @@ export default function App() {
                                   <div className="management-links">
                                     {person.linkedInUrl && (person.linkedInStatus === "verified" || person.linkedInStatus === "likely_match") ? (
                                       <a href={person.linkedInUrl} target="_blank" rel="noreferrer">
-                                        {person.linkedInStatus === "verified" ? "LinkedIn" : "Likely LinkedIn"} <ExternalLink size={14} aria-hidden />
+                                        Public profile link <ExternalLink size={14} aria-hidden />
                                       </a>
                                     ) : (
-                                      <span>LinkedIn needs review</span>
+                                      <span>Profile link unavailable</span>
                                     )}
                                     {person.sourceUrl ? (
                                       <a href={person.sourceUrl} target="_blank" rel="noreferrer">

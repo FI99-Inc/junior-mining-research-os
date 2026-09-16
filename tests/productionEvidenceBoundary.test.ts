@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { COMPANY_UNIVERSE } from "../src/domain/companyResolver";
 import { collectEvidence, type BrowserPageFetcher } from "../src/domain/evidencePipeline";
 import { createResearchRun } from "../src/domain/researchEngine";
@@ -47,14 +47,9 @@ describe("production evidence boundary", () => {
     expect(JSON.stringify(result)).not.toContain(LEGACY_SEED_TIME);
   });
 
-  it("treats a reachable SEDAR+ search page as adapter status, not issuer evidence", async () => {
+  it("treats SEDAR+ as a manual disclosure reference without probing the portal", async () => {
     const company = COMPANY_UNIVERSE.find((candidate) => candidate.country === "CA")!;
-    const fetcher: typeof fetch = async (input) => {
-      const url = String(input);
-      return url.includes("sedarplus.ca")
-        ? new Response("<html><title>SEDAR+ search</title></html>", { status: 200, headers: { "content-type": "text/html" } })
-        : unavailableFetch(input);
-    };
+    const fetcher = vi.fn(unavailableFetch);
 
     const result = await collectEvidence(company, {
       fetcher,
@@ -65,8 +60,9 @@ describe("production evidence boundary", () => {
     expect(result.sources).toEqual([]);
     expect(result.facts).toEqual([]);
     expect(result.status.adapters).toContainEqual(
-      expect.objectContaining({ id: "sedar-plus-live", status: "configured" })
+      expect.objectContaining({ id: "sedar-plus-reference", status: "manual" })
     );
+    expect(fetcher.mock.calls.some(([input]) => String(input).includes("sedarplus.ca"))).toBe(false);
   });
 
   it("does not turn SEC filing metadata into evidence when the filing document cannot be retrieved", async () => {
@@ -94,7 +90,9 @@ describe("production evidence boundary", () => {
     const result = await collectEvidence(company, {
       fetcher,
       browserFetcher: unavailableBrowser,
-      now: () => RUN_TIME
+      now: () => RUN_TIME,
+      secUserAgent: "Junior Mining Research OS research@example.invalid",
+      secRequestIntervalMs: 0
     });
 
     expect(result.sources.filter((source) => source.publisher.startsWith("SEC EDGAR"))).toEqual([]);
@@ -129,5 +127,12 @@ describe("production evidence boundary", () => {
     expect(productionText).not.toMatch(/seededSources|disclosure search placeholder|uses seeded excerpts/i);
     expect(productionText).not.toContain('|| "Manual source"');
     expect(productionText).not.toMatch(/tests[\\/]fixtures/);
+  });
+
+  it("keeps the offline demo independent from downloaded Yahoo payloads", () => {
+    const demoFixture = readFileSync(join(process.cwd(), "server", "demoFixture.ts"), "utf8");
+
+    expect(demoFixture).not.toMatch(/finance\.yahoo\.com|query1\.finance\.yahoo\.com|quoteResponse|regularMarketPrice/i);
+    expect(demoFixture).toContain("example.invalid");
   });
 });

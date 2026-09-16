@@ -38,10 +38,10 @@ flowchart TB
         direction LR
         subgraph L4["DATA + EVIDENCE SOURCES"]
             direction LR
-            S1[("Live regulatory evidence<br/>Retrieved SEC filing documents<br/>SEDAR+ status until document retrieval")]
-            S2[("Live issuer collection<br/>Retrieved Playwright/fetch management + news pages<br/>Matched newswire / RSS items")]
+            S1[("Optional regulatory research<br/>Configured SEC filing retrieval<br/>SEDAR+ manual disclosure reference")]
+            S2[("Bounded issuer collection<br/>Playwright/fetch management + news pages<br/>GlobeNewswire RSS when available")]
             S3[("User-supplied issuer evidence<br/>normalized separately; appended after collection<br/>requires source URL + excerpts")]
-            S4[("Yahoo Finance / YFinance<br/>market data / financials / analyst targets / ownership")]
+            S4[("Yahoo Finance / YFinance<br/>best-effort, non-filing-backed market data<br/>missing fields remain unavailable")]
             W4 --> S1
             S1 ~~~ S2 ~~~ S3 ~~~ S4
         end

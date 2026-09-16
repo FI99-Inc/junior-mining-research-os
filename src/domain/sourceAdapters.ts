@@ -432,32 +432,13 @@ export async function collectMarketSnapshot(
   };
 }
 
-export function sourceAdapterStatuses(company: CompanyCandidate): AdapterStatus[] {
-  const regulatoryAdapter: AdapterStatus = company.country === "US"
-    ? {
-        id: "sec-edgar",
-        name: "SEC EDGAR automated discovery",
-        status: "configured",
-        note: "The live evidence run attempts official SEC filing discovery; only retrieved filing documents become evidence.",
-        contributes: ["annual and quarterly filing discovery", "insider filing discovery"],
-        missing: ["structured cash runway extraction", "share-count table extraction", "S-K 1300 technical-report parsing"]
-      }
-    : {
-        id: "sedar-plus",
-        name: "SEDAR+ disclosure discovery",
-        status: "configured",
-        note: "The live evidence run checks SEDAR+ availability; only retrieved issuer documents become evidence.",
-        contributes: ["Canadian disclosure portal availability"],
-        missing: ["issuer-specific document download", "NI 43-101 parsing", "management information circular extraction"]
-      };
-
+export function sourceAdapterStatuses(_company: CompanyCandidate): AdapterStatus[] {
   return [
-    regulatoryAdapter,
     {
       id: "market-data",
       name: "Yahoo/YFinance market data",
       status: "configured",
-      note: "Yahoo Finance/YFinance supplies live market data where available; missing quote fields remain unavailable.",
+      note: "Yahoo Finance/YFinance supplies best-effort market data where available; missing or failed fields remain unavailable and are not filing-backed.",
       contributes: [
         "current market price",
         "market cap",
