@@ -1,21 +1,21 @@
 # Junior Mining Research OS
 
-A private, browser-based research guide for Canada- and U.S.-listed junior mining companies. Enter a supported ticker or company name to generate a sourced report covering investment quality, market perspectives, management, risks, news, share structure, financials, and evidence provenance.
+A browser-based research guide for Canada- and U.S.-listed junior mining companies. Enter a supported ticker or company name to generate a sourced report covering investment quality, market perspectives, management, risks, news, share structure, financials, and evidence provenance.
 
-The application is a research aid, not a buy/sell recommendation. Unsupported facts remain unavailable rather than being inferred.
+The application is a research aid, not financial advice or a buy/sell recommendation. Unsupported facts remain unavailable rather than being inferred. Independently verify all material facts before making an investment decision.
 
 ## Requirements
 
 - Node.js 22 or newer
-- pnpm 10 or newer
+- pnpm 11.19.0 (declared by the `packageManager` field)
 - Playwright-managed Chromium for optional rendered issuer-site collection
 
-## Local development
+## Live mode and local development
 
 Install dependencies:
 
 ```sh
-pnpm install
+pnpm install --frozen-lockfile
 pnpm exec playwright install chromium
 ```
 
@@ -39,11 +39,13 @@ pnpm dev
 
 Open `http://127.0.0.1:5173/`. The Vite server proxies `/api` requests to the Express API at `http://127.0.0.1:4173/`.
 
+Live mode is the default. It makes best-effort external requests when a research run starts and displays unavailable providers or missing evidence rather than replacing them with fixture data.
+
 The optional `PORT` setting changes the API port from `4173`. If changed, update the Vite proxy in `vite.config.ts` to match. No market-data API key is required.
 
 Playwright uses its managed Chromium build by default. Set `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` only when the deployment must use a specific Chromium-compatible executable. Set `DISABLE_RENDERED_CRAWLING=1` to skip Playwright and use the bounded plain-fetch fallback. If Chromium is absent or cannot launch, the research run continues with plain fetch and reports actionable setup guidance in the adapter status.
 
-On Windows PowerShell, use the `.cmd` shim if `pnpm` is not resolved directly, for example `pnpm.cmd install`, `pnpm.cmd exec playwright install chromium`, `pnpm.cmd server`, and `pnpm.cmd dev`.
+On Windows PowerShell, use the `.cmd` shim if `pnpm` is not resolved directly, for example `pnpm.cmd install --frozen-lockfile`, `pnpm.cmd exec playwright install chromium`, `pnpm.cmd server`, and `pnpm.cmd dev`.
 
 Automated SEC EDGAR retrieval is optional and requires a declared application contact. Set `SEC_USER_AGENT` in the shell that starts the API, using the format `Application Name contact@example.org`. Do not commit personal contact details to `.env.example` or source files. Without this setting, SEC collection is skipped and shown as needing configuration; the rest of the research run continues normally.
 
@@ -51,7 +53,7 @@ Automated SEC EDGAR retrieval is optional and requires a declared application co
 
 The demo uses one clearly fictional company and makes no Yahoo Finance, SEC, SEDAR+, newswire, issuer-site, or Playwright requests.
 
-1. Install dependencies with `pnpm install`.
+1. Install dependencies with `pnpm install --frozen-lockfile`.
 2. Start the fictional API fixture in one terminal:
 
    ```sh
@@ -96,6 +98,27 @@ Research runs are stored in process memory and are cleared when the API restarts
 
 Visual asset provenance and third-party attributions are documented in [ASSET-LICENSES.md](ASSET-LICENSES.md). The application does not hotlink portraits or background images.
 
+## External network calls
+
+Live research can contact the following public services:
+
+- Yahoo Finance through `yahoo-finance2` for best-effort market, forecast, financial, and available ownership fields.
+- SEC EDGAR when a valid `SEC_USER_AGENT` is configured.
+- Issuer websites through bounded Playwright or plain-fetch collection for management and news evidence.
+- GlobeNewswire RSS for matching public news releases.
+- SEDAR+ and other research resources as outbound reference links only where document-level automation is not implemented.
+
+Third-party services can rate-limit, block, remove, or change data without notice. No downloaded Yahoo data is committed or redistributed as a fixture. Provider behavior, request limits, and fallback semantics are documented in [external-integrations.md](docs/external-integrations.md).
+
+## Limitations
+
+- The supported issuer universe is curated rather than comprehensive.
+- Live reports depend on external data quality and may contain stale, partial, delayed, or unavailable fields.
+- SEDAR+ is currently a public disclosure link, not automated document retrieval.
+- Research history is process-local and is lost when the API restarts.
+- The app has no authentication or authorization layer and is intended for local or privately controlled use. Add access controls before exposing it to untrusted networks.
+- Scores and analytical frameworks are research aids, not predictions, endorsements, or investment recommendations.
+
 ## Evidence provenance
 
 - Automated evidence is accepted only after the referenced document or page is retrieved during the current research run.
@@ -104,6 +127,10 @@ Visual asset provenance and third-party attributions are documented in [ASSET-LI
 - Registry company and management fields provide search and display context; they do not create evidence, citations, or evidence-confidence gains by themselves.
 - Test-only synthetic evidence lives under `tests/` and is never imported by the application or server runtime.
 - The separate fictional demo fixture is reachable only through explicit demo mode, is visibly labeled, and cannot enter live research or live scoring.
+
+## Project governance
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development and pull-request expectations, [SECURITY.md](SECURITY.md) for private vulnerability reporting, and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community standards. The latest dependency advisory review is recorded in [docs/dependency-security.md](docs/dependency-security.md).
 
 ## License
 
