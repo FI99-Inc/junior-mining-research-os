@@ -71,6 +71,39 @@ The demo uses one clearly fictional company and makes no Yahoo Finance, SEC, SED
 
 The equivalent configuration flag is `DEMO_MODE=1`; in PowerShell, run `$env:DEMO_MODE = "1"` before `pnpm.cmd server`. Restart without the demo flag to use normal live research. Demo mode is read-only and isolated: it exposes only the fictional issuer and ignores imported evidence. Live mode never exposes the demo issuer or fixture.
 
+## Optional Render deployment
+
+The repository includes a Docker-based [Render Blueprint](render.yaml). It runs the Vite frontend and Express API from one process, uses `/api/health` for health checks, and includes Playwright-managed Chromium in the image.
+
+The Blueprint deliberately starts in fictional demo mode with rendered crawling disabled. This is the safe public default because the application does not yet have authentication, authorization, or per-user rate limits. Do not expose live research mode to untrusted traffic until those controls are added.
+
+To review the deployment without creating it:
+
+1. Open Render's **New Blueprint Instance** flow and select this repository.
+2. Confirm the service, region, compute plan, and environment variables from `render.yaml`.
+3. Keep `DEMO_MODE=1` for a public demonstration.
+4. Deploy only after reviewing Render's current pricing and free-instance limitations.
+
+Render supplies `PORT` automatically. `HOST=0.0.0.0` allows the service to accept Render traffic. The free plan can spin down and has limited memory; keep `DISABLE_RENDERED_CRAWLING=1` there. On an adequately sized paid service, set it to `0` to enable the bundled Chromium collector. Live mode also requires changing `DEMO_MODE` to `0`; configure `SEC_USER_AGENT` in Render's environment settings if SEC retrieval is needed. Never commit that contact value or any future credential.
+
+The production server can also be exercised locally after a build:
+
+```sh
+pnpm build
+HOST=0.0.0.0 PORT=4173 pnpm start
+```
+
+PowerShell equivalent:
+
+```powershell
+pnpm.cmd build
+$env:HOST = "0.0.0.0"
+$env:PORT = "4173"
+pnpm.cmd start
+```
+
+Open `http://127.0.0.1:4173/` and check `http://127.0.0.1:4173/api/health`. Research history remains process-local and is cleared by restarts, redeploys, or free-service spin-downs.
+
 ## Quality commands
 
 ```sh

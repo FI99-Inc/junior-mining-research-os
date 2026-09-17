@@ -1,4 +1,5 @@
 import express, { type ErrorRequestHandler, type Request, type Response } from "express";
+import path from "node:path";
 import { searchCompanies, resolveCompany } from "../src/domain/companyResolver";
 import { createReportStore } from "../src/domain/reportStore";
 import { createResearchRun } from "../src/domain/researchEngine";
@@ -68,7 +69,7 @@ function normalizeManualSources(value: unknown): SourceDocument[] {
     .filter((source): source is SourceDocument => Boolean(source));
 }
 
-export function createApp(options: { demoMode?: boolean } = {}) {
+export function createApp(options: { demoMode?: boolean; staticDir?: string } = {}) {
   const app = express();
   const store = createReportStore();
   const demoMode = options.demoMode ?? process.env.DEMO_MODE === "1";
@@ -132,6 +133,14 @@ export function createApp(options: { demoMode?: boolean } = {}) {
     store.save(run);
     res.json({ ...run, adapters: evidence.status.adapters });
   }, handleResearchError);
+
+  const staticDir = options.staticDir;
+  if (staticDir) {
+    app.use(express.static(staticDir, { index: false }));
+    app.get(/^(?!\/(?:api|assets)(?:\/|$)).*/, (_req, res) => {
+      res.sendFile(path.join(staticDir, "index.html"));
+    });
+  }
 
   return app;
 }

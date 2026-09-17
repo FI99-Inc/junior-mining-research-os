@@ -1,8 +1,8 @@
 import { createApp } from "./app";
+import { resolveServerRuntime } from "./runtimeConfig";
 
-const port = Number(process.env.PORT ?? 4173);
-const demoMode = process.argv.includes("--demo") || process.env.DEMO_MODE === "1";
+const { demoMode, host, port, staticDir } = resolveServerRuntime();
 
-createApp({ demoMode }).listen(port, "127.0.0.1", () => {
-  console.log(`Junior Mining Research OS API running at http://127.0.0.1:${port} (${demoMode ? "demo" : "live"} mode)`);
+createApp({ demoMode, staticDir }).listen(port, host, () => {
+  console.log(`Junior Mining Research OS running at http://${host}:${port} (${demoMode ? "demo" : "live"} mode)`);
 });

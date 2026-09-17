@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: junior-mining-research-os
+    runtime: docker
+    plan: free
+    region: ohio
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    envVars:
+      - key: HOST
+        value: 0.0.0.0
+      - key: NODE_ENV
+        value: production
+      - key: DEMO_MODE
+        value: "1"
+      - key: DISABLE_RENDERED_CRAWLING
+        value: "1"
