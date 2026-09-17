@@ -384,7 +384,7 @@ function CompanySearchPanel({
                   setActiveIndex(-1);
                 }
               }}
-              placeholder="USGO, SGD.V, Snowline"
+              placeholder="USGO, SGD.TO, Snowline"
               autoComplete="off"
             />
             {expanded ? <SuggestionList id={listId} activeIndex={activeIndex} suggestions={suggestions} onPick={onPick} /> : null}
@@ -396,7 +396,7 @@ function CompanySearchPanel({
         </div>
       </form>
       {showHelper ? (
-        <p>Try USGO, SGD.V, GMIN.V, WRN, or FUU.V. The universe can expand cleanly from the company registry.</p>
+        <p>Try USGO, SGD.TO, GMIN.TO, WRN, or FUU.V. The universe can expand cleanly from the company registry.</p>
       ) : null}
       {error ? <div className="error" role="alert">{error}</div> : null}
     </section>

@@ -20,11 +20,11 @@ describe("Research workflow resilience", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<App />);
     await userEvent.click(screen.getByRole("button", { name: "Research USGO" }));
-    expect(screen.getByRole("button", { name: "Research SGD.V" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Research SGD.TO" })).toBeDisabled();
     await act(async () => finish(new Response("<html>Gateway unavailable</html>", { status: 502 })));
     expect(await screen.findByRole("alert")).toHaveTextContent(/research.*failed|unavailable/i);
     expect(screen.getByRole("alert")).not.toHaveTextContent(/JSON|<html>/i);
-    expect(screen.getByRole("button", { name: "Research SGD.V" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Research SGD.TO" })).toBeEnabled();
   });
 
   it("keeps a successful report when history cannot be loaded", async () => {
