@@ -260,7 +260,7 @@ describe("API app", () => {
       const search = await fetch(`${baseUrl}/api/companies?q=snowline`);
       expect(search.ok).toBe(true);
       const companies = await search.json();
-      expect(companies[0].ticker).toBe("SGD.V");
+      expect(companies[0].ticker).toBe("SGD.TO");
 
       const reportResponse = await fetch(`${baseUrl}/api/research-runs`, {
         method: "POST",
