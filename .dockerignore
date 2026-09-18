@@ -1,0 +1,10 @@
+.git
+.github
+.env
+.env.*
+!.env.example
+.codex-smoke-logs
+dist
+node_modules
+*.log
+*.tsbuildinfo

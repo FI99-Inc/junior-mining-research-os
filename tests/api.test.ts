@@ -1,3 +1,6 @@
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../server/app";
 import { collectEvidence } from "../src/domain/evidencePipeline";
@@ -306,6 +309,45 @@ describe("API app", () => {
       await new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
       });
+    }
+  });
+
+  it("serves the built frontend and preserves API routes from one process", async () => {
+    const staticDir = await mkdtemp(path.join(tmpdir(), "jmro-static-"));
+    await mkdir(path.join(staticDir, "assets"));
+    await writeFile(path.join(staticDir, "index.html"), "<!doctype html><title>Research OS</title>", "utf8");
+    await writeFile(path.join(staticDir, "assets", "app.js"), "console.log('research os');", "utf8");
+
+    const server = createApp({ staticDir }).listen(0, "127.0.0.1");
+    await new Promise<void>((resolve) => server.once("listening", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("No test server port");
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+
+    try {
+      const home = await fetch(`${baseUrl}/`);
+      expect(home.status).toBe(200);
+      expect(await home.text()).toContain("<title>Research OS</title>");
+
+      const clientRoute = await fetch(`${baseUrl}/management`);
+      expect(clientRoute.status).toBe(200);
+      expect(await clientRoute.text()).toContain("<title>Research OS</title>");
+
+      const asset = await fetch(`${baseUrl}/assets/app.js`);
+      expect(asset.status).toBe(200);
+      expect(await asset.text()).toBe("console.log('research os');");
+
+      const missingAsset = await fetch(`${baseUrl}/assets/missing.js`);
+      expect(missingAsset.status).toBe(404);
+
+      const health = await fetch(`${baseUrl}/api/health`);
+      expect(health.status).toBe(200);
+      expect(await health.json()).toEqual({ status: "ok", mode: "live" });
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+      await rm(staticDir, { recursive: true, force: true });
     }
   });
 
